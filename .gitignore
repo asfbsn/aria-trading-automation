@@ -1,0 +1,10 @@
+# Secrets — NEVER commit (holds Telegram bot token + Claude auth token)
+.env
+
+# Runtime output / state
+logs/
+state/
+*.log
+
+# Transient daily priority overlay (date-gated instructor picks)
+priority-today.md
