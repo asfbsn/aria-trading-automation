@@ -6,7 +6,7 @@
 set -Eeuo pipefail
 export PATH="$HOME/.local/bin:$HOME/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
-ARIA_HOME="${ARIA_HOME:-$HOME/aria-trading}"
+ARIA_HOME="${ARIA_HOME:-$HOME/Projects/aria-trading}"
 [ -f "$ARIA_HOME/.env" ] && source "$ARIA_HOME/.env"
 
 TODAY="$(date +%F)"

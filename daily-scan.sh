@@ -21,7 +21,7 @@ export PATH="$HOME/.local/bin:$HOME/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 # ===========================================================================
 # 0. Configuration  (override anything in ~/aria-trading/.env)
 # ===========================================================================
-ARIA_HOME="${ARIA_HOME:-$HOME/aria-trading}"
+ARIA_HOME="${ARIA_HOME:-$HOME/Projects/aria-trading}"
 LOG_DIR="${LOG_DIR:-$ARIA_HOME/logs}"
 STATE_DIR="${STATE_DIR:-$ARIA_HOME/state}"
 PROMPT_FILE="${PROMPT_FILE:-$ARIA_HOME/prompts/bull-put-spread.md}"

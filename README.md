@@ -53,8 +53,8 @@ FORCE_RUN=true PROMPT_FILE="$PWD/prompts/smoke-test.md" ./daily-scan.sh
 # install the schedule:
 ( crontab -l 2>/dev/null; cat <<'CRON'
 CRON_TZ=Asia/Jerusalem
-0  19 * * 1-5 $HOME/aria-trading/daily-scan.sh >> $HOME/aria-trading/logs/cron.log 2>&1
-45 19 * * 1-5 $HOME/aria-trading/watchdog.sh   >> $HOME/aria-trading/logs/watchdog.log 2>&1
+0  19 * * 1-5 $HOME/Projects/aria-trading/daily-scan.sh >> $HOME/Projects/aria-trading/logs/cron.log 2>&1
+45 19 * * 1-5 $HOME/Projects/aria-trading/watchdog.sh   >> $HOME/Projects/aria-trading/logs/watchdog.log 2>&1
 CRON
 ) | crontab -
 ```
