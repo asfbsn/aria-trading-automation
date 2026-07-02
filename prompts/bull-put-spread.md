@@ -57,14 +57,34 @@ sections:
    "אין אישור" or the rows are mixed — briefly justify the override. Such picks
    are RADAR only, never PRIME.
 
+## R/R VERIFICATION against the LIVE option chain — PRIME gate
+A dashboard "יש אישור כניסה" is **NOT** enough to be PRIME. For **each PRIME-eligible
+name only** (passed rules 1,3,5: above MA-150 + full confirmation + strong structure —
+usually 0–3 names; token economy: do NOT price rejects/RADAR), verify a COMPLIANT
+spread actually exists using the IBKR **read-only** option tools:
+1. `search_contracts` (security_type STK) → `underlying_contract_id` (exact symbol match, US primary listing).
+2. `get_option_parameters` → pick the expiration nearest **~30 DTE**.
+3. `get_option_data` (bound strikes around support) → `put_contract_id`s at/below the MA-150 & swing low.
+4. `get_price_snapshot` on the candidate short & long puts → bid/ask → use mids.
+5. Compute: **credit = short_mid − long_mid**; **max loss = width − credit**; **R/R = maxloss : credit**.
+   PRIME requires BOTH: (a) short strike **BELOW support** (MA-150 or swing low), AND
+   (b) **R/R within 1:1.5–2.5** (credit ≈ width/3.5 … width/2.5).
+- If no strike/width combo satisfies BOTH → the name is a **REJECT**, reason
+  "R/R gate: can't hit 1:1.5–2.5 with short below support" (the APD/AMZN case) — do
+  NOT list it as PRIME and do NOT bend "short below support" to force the band.
+- For every PRIME row, report the **verified exact strikes, credit, max loss, max profit, and R/R**.
+- NEVER use order tools (`create_order_instruction`); read-only only.
+
 ## Output — TWO separate tables (prevents execution errors; live money soon)
 Decision basis = the SETTLED (prior closed candle) state; flag PROVISIONAL (today's
 unsettled) changes separately. Produce, in order:
 
 - **Headline** (counts: prime / radar / rejects).
 - **Table 1 — 🟢 PRIME CANDIDATES (ready for execution):** ONLY stocks with full
-  "יש אישור כניסה" + strong structure that pass the MA-150 and 1:1.5–2.5 R/R rules.
-  These alone are execution-ready.
+  "יש אישור כניסה" + strong structure that pass the MA-150 rule AND a **live-chain-
+  verified** 1:1.5–2.5 spread with the short BELOW support (see R/R VERIFICATION).
+  A confirmed name with no compliant spread is a REJECT, not PRIME. These alone
+  are execution-ready.
 - **Table 2 — 🟡 RADAR / WATCHLIST (discretionary):** "setups in the making"
   (strong structure / weak trigger per rule 5) PLUS any "hidden gem" you flag via
   rule 6 (your own TA/price-action/IV) — briefly justify any override. Watch-only.

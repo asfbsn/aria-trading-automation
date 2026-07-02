@@ -34,8 +34,9 @@ CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$HOME/Projects/aria-baby}"
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-4-8}"
 
-# Read-only / navigation tools only. NOTE: we deliberately do NOT allow any
-# order-placement tools (e.g. the broker MCP's create_order_instruction).
+# Read-only navigation tools + read-only IBKR option-chain tools (to verify PRIME
+# R/R against LIVE prices). We deliberately do NOT allow any order-placement tools
+# (the broker MCP's create_order_instruction / delete_order_instruction).
 CLAUDE_ALLOWED_TOOLS="${CLAUDE_ALLOWED_TOOLS:-\
 mcp__tradingview-bridge__tv_health_check,\
 mcp__tradingview-bridge__tv_launch,\
@@ -48,7 +49,11 @@ mcp__tradingview-bridge__chart_get_state,\
 mcp__tradingview-bridge__data_get_pine_tables,\
 mcp__tradingview-bridge__data_get_study_values,\
 mcp__tradingview-bridge__data_get_ohlcv,\
-mcp__tradingview-bridge__quote_get}"
+mcp__tradingview-bridge__quote_get,\
+mcp__1410134e-9987-4116-a98c-abba7220532e__search_contracts,\
+mcp__1410134e-9987-4116-a98c-abba7220532e__get_option_parameters,\
+mcp__1410134e-9987-4116-a98c-abba7220532e__get_option_data,\
+mcp__1410134e-9987-4116-a98c-abba7220532e__get_price_snapshot}"
 
 # TradingView Desktop process name + launch command (adjust to your install:
 # native binary, AppImage path, or e.g. 'flatpak run com.tradingview.Desktop').
