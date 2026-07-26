@@ -8,3 +8,8 @@ state/
 
 # Transient daily priority overlay (date-gated instructor picks)
 priority-today.md
+
+# Backtest research tool — its own venv + generated run output
+scripts/backtest/.venv/
+scripts/backtest/run_out/
+scripts/backtest/__pycache__/
