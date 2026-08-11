@@ -13,3 +13,4 @@ priority-today.md
 scripts/backtest/.venv/
 scripts/backtest/run_out/
 scripts/backtest/__pycache__/
+scripts/__pycache__/
