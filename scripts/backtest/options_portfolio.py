@@ -180,7 +180,7 @@ class OptionPosition:
 
     def __init__(self, option_type: str, strike: float, expiry: str,
                  qty: int, entry_price: float, entry_date: str,
-                 underlying_code: str):
+                 underlying_code: str, group_id: Optional[str] = None):
         self.option_type = option_type
         self.strike = strike
         self.expiry = pd.Timestamp(expiry)
@@ -188,6 +188,10 @@ class OptionPosition:
         self.entry_price = entry_price
         self.entry_date = entry_date
         self.underlying_code = underlying_code
+        # group_id links the legs of a multi-leg position (e.g. a bull put
+        # spread) so an early exercise of one leg closes the whole spread
+        # instead of orphaning the surviving legs.
+        self.group_id = group_id
 
     def time_to_expiry(self, current_date: pd.Timestamp) -> float:
         """Calculate time remaining to expiry in years.
@@ -285,6 +289,11 @@ def run_options_backtest(
     # Generate trade signals
     signals = engine.generate(data_map)
 
+    # Defined-risk vertical margin: reserve (width - net_credit) per spread
+    # group while any of its legs is open; reject new opens when reserves
+    # exceed cash — matches broker buying-power rules for credit spreads.
+    spread_margin_pct = float(options_cfg.get("spread_margin_pct", 1.0))
+
     # Build trading date sequence
     all_dates = set()
     for df in data_map.values():
@@ -336,23 +345,38 @@ def run_options_backtest(
                 intrinsic = pos.intrinsic_value(spot)
                 continuation = bs_price(spot, pos.strike, T_ex, risk_free_rate, iv_val_ex, pos.option_type)
                 if intrinsic > 0 and intrinsic > continuation * 1.02:
-                    # Early exercise is optimal
-                    settlement = intrinsic * pos.qty * contract_multiplier
-                    cash += settlement
-                    pnl = (intrinsic - pos.entry_price) * pos.qty * contract_multiplier
-                    trade_records.append({
-                        "timestamp": date_str,
-                        "code": pos.underlying_code,
-                        "option_type": pos.option_type,
-                        "strike": pos.strike,
-                        "expiry": str(pos.expiry.date()),
-                        "side": "early_exercise",
-                        "price": round(intrinsic, 4),
-                        "qty": pos.qty,
-                        "pnl": round(pnl, 4),
-                        "entry_date": pos.entry_date,
-                    })
-                    positions.remove(pos)
+                    # Early exercise is optimal. If this leg belongs to a
+                    # spread (group_id), close ALL sibling legs the same day —
+                    # live, you would never leave the protective leg of an
+                    # assigned vertical running as a naked long option.
+                    group = [pos] if pos.group_id is None else [
+                        p for p in list(positions) if p.group_id == pos.group_id
+                    ]
+                    for member in group:
+                        member_spot = spot_prices.get(member.underlying_code, 0.0)
+                        member_T = max(member.time_to_expiry(ts), 0.0)
+                        value = (member.intrinsic_value(member_spot)
+                                 if member is pos else
+                                 bs_price(member_spot, member.strike, member_T,
+                                          risk_free_rate,
+                                          ivs.get(member.underlying_code, 0.3),
+                                          member.option_type))
+                        settlement = value * member.qty * contract_multiplier
+                        cash += settlement
+                        pnl = (value - member.entry_price) * member.qty * contract_multiplier
+                        trade_records.append({
+                            "timestamp": date_str,
+                            "code": member.underlying_code,
+                            "option_type": member.option_type,
+                            "strike": member.strike,
+                            "expiry": str(member.expiry.date()),
+                            "side": "early_exercise",
+                            "price": round(value, 4),
+                            "qty": member.qty,
+                            "pnl": round(pnl, 4),
+                            "entry_date": member.entry_date,
+                        })
+                        positions.remove(member)
 
         # 2b. Handle expiry
         expired = [p for p in positions if p.is_expired(ts)]
@@ -388,9 +412,72 @@ def run_options_backtest(
             underlying = sig.get("underlying", codes[0] if codes else "")
 
             spot = spot_prices.get(underlying, 0.0)
+            if sig.get("price_mode") == "open":
+                df_u = data_map.get(underlying)
+                if df_u is not None and "open" in df_u.columns and ts in df_u.index:
+                    spot = float(df_u.at[ts, "open"])
+                else:
+                    # Requested next-day-open fill but no open is available
+                    # (e.g. row dropped by loader validation, or the entry date
+                    # is a holiday for this ticker). Fill uses the close — log
+                    # so the backtest flags the quieter-than-modeled fill.
+                    print(f"WARN {date_str} {underlying}: price_mode=open but no "
+                          f"open bar; falling back to close fill", file=sys.stderr)
             iv_val = ivs.get(underlying, 0.3)
 
+            # Pre-price the legs: needed both for the margin gate's net-credit
+            # below and for the execution loop after it.
+            leg_prices: List[float] = []
             for leg in legs:
+                leg_type = leg.get("type", "call")
+                strike = leg.get("strike", spot)
+                expiry = leg.get("expiry", "")
+                expiry_ts = pd.Timestamp(expiry)
+                T = max((expiry_ts - ts).days / 365.0, 0.001)
+                adj_iv = iv_val
+                if iv_skew != 0 or iv_curvature != 0:
+                    adj_iv = iv_smile_adjustment(spot, strike, iv_val, iv_skew, iv_curvature)
+                leg_prices.append(bs_price(spot, strike, T, risk_free_rate, adj_iv, leg_type))
+
+            # Margin gate (defined-risk credit spreads only): reserve the true
+            # max loss = (width - net_credit) * multiplier * contracts per
+            # group, matching broker buying-power rules. Reject if it would
+            # push total reserve above available cash * spread_margin_pct.
+            if action == "open" and sig.get("group_id"):
+                strikes = [leg.get("strike", 0.0) for leg in legs]
+                if len(strikes) >= 2:
+                    width = max(strikes) - min(strikes)
+                    contracts = max(abs(leg.get("qty", 1)) for leg in legs)
+                    net_credit = sum(p * leg.get("qty", 1)
+                                     for p, leg in zip(leg_prices, legs))
+                    new_reserve = (width - net_credit) * contract_multiplier * contracts
+                    open_reserve = 0.0
+                    seen_groups = set()
+                    for p in positions:
+                        if p.group_id and p.group_id not in seen_groups:
+                            seen_groups.add(p.group_id)
+                            sibs = [q for q in positions if q.group_id == p.group_id]
+                            sib_strikes = [q.strike for q in sibs]
+                            sib_contracts = max(abs(q.qty) for q in sibs)
+                            sib_credit = sum(-q.entry_price * q.qty for q in sibs)
+                            open_reserve += ((max(sib_strikes) - min(sib_strikes) - sib_credit)
+                                             * contract_multiplier * sib_contracts)
+                    if open_reserve + new_reserve > cash * spread_margin_pct:
+                        trade_records.append({
+                            "timestamp": date_str,
+                            "code": underlying,
+                            "option_type": "",
+                            "strike": 0.0,
+                            "expiry": "",
+                            "side": "rejected_margin",
+                            "price": 0.0,
+                            "qty": 0,
+                            "pnl": 0.0,
+                            "entry_date": date_str,
+                        })
+                        continue
+
+            for leg, opt_price in zip(legs, leg_prices):
                 leg_type = leg.get("type", "call")
                 strike = leg.get("strike", spot)
                 expiry = leg.get("expiry", "")
@@ -399,13 +486,8 @@ def run_options_backtest(
                 expiry_ts = pd.Timestamp(expiry)
                 T = max((expiry_ts - ts).days / 365.0, 0.001)
 
-                # Apply IV smile adjustment (v2) if configured
-                adj_iv = iv_val
-                if iv_skew != 0 or iv_curvature != 0:
-                    adj_iv = iv_smile_adjustment(spot, strike, iv_val, iv_skew, iv_curvature)
-
-                # Black-Scholes price (with smile-adjusted IV if enabled)
-                opt_price = bs_price(spot, strike, T, risk_free_rate, adj_iv, leg_type)
+                # Smile-adjusted IV and BS price were computed in the
+                # pre-price loop above; opt_price comes from that pass.
 
                 if action == "open":
                     # Open: long pays premium, short receives premium
@@ -423,6 +505,7 @@ def run_options_backtest(
                         entry_price=opt_price,
                         entry_date=date_str,
                         underlying_code=underlying,
+                        group_id=sig.get("group_id"),
                     ))
 
                     trade_records.append({
