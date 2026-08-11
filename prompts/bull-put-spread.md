@@ -21,12 +21,45 @@ trading profile exactly (see memory: trading-bull-put-spread-profile).
   open other watchlists, do NOT search for external symbols, avoid unnecessary
   deep-dives or tool loops. One efficient pass per ticker; pull option chains only
   for PRIME names. Then write the report and exit cleanly to conserve tokens.
-- For each constituent, read the **"Premium Trading Dashboard - Adi Radmy Edition"**
-  Pine table (data_get_pine_tables), MA-150 (data_get_study_values), and price /
-  recent swing low (data_get_ohlcv, summary).
-- RELIABILITY: rapid symbol switching outruns the indicator recalc. After each
-  chart_set_symbol, confirm the symbol via chart_get_state AND sanity-check that
-  MA-150 is plausible vs the live price before trusting a read; re-read on mismatch.
+- **Entry signal has a new local-compute proxy, run alongside the old chart
+  read during the comparison trial below** (see TRIAL section). The
+  "Premium Trading Dashboard - Adi Radmy Edition" Pine indicator is a
+  protected/invite-only script (source confirmed unavailable 2026-07-09) — its
+  exact internal formulas can't be extracted. `scripts/compute_signal.py` is a
+  best-effort proxy built from the indicator's *declared input parameters*
+  (RSI length 20 / threshold 50, MA50, MA150, Volume MA length 20) — NOT a
+  replica of Adi's exact logic. Treat its output as your own independent
+  technical read, same trust level as the "hidden gem" override in rule 6, not
+  as "the dashboard said so."
+- For each constituent: call `get_price_history` (IBKR) for **at least 220 daily
+  bars** (MA150 needs 150+ bars of warmup; 220 gives margin) → feed the bars as
+  `{"ticker": "...", "bars": [{"date","open","high","low","close","volume"}, ...]}`
+  (ascending by date) to `python3 $ARIA_HOME/scripts/compute_signal.py` → parse
+  the JSON result. **Bash permission is scoped to this exact script prefix —
+  invoke it directly with a heredoc, not a leading pipe:**
+  `python3 $ARIA_HOME/scripts/compute_signal.py <<'EOF'` / JSON / `EOF`
+  (a command starting with `echo ... |` or similar will NOT match the allowed
+  prefix and will be blocked).
+- **Earnings proximity is no longer automated** (its only source was the Pine
+  dashboard's Key Facts panel, which required a rendered chart). If you already
+  know a name's earnings date, factor it in; otherwise mark "earnings: unknown"
+  and do not gate PRIME on it — flag for manual check instead.
+
+## 🔬 TRIAL: dashboard vs proxy comparison (few-day window, remove after)
+`compute_signal.py` is unverified against the real thing. Until told otherwise,
+run **BOTH** signals per constituent, not just the proxy:
+- **OLD (still authoritative for PRIME/RADAR/REJECT decisions):** the original
+  chart-based read — chart_set_symbol → chart_get_state (confirm symbol landed)
+  → data_get_pine_tables (**"Premium Trading Dashboard - Adi Radmy Edition"**) →
+  data_get_study_values (MA-150) → data_get_ohlcv (price/swing low). Same as
+  before this trial — this is what rules 1, 2, and 5 below still key off of.
+- **NEW (shadow only, never gates a decision):** the `compute_signal.py` proxy
+  described above.
+- Log both per ticker and add a **Signal comparison** table to the output (see
+  Output section) so agreement/divergence between the two is visible across a
+  few runs before the old chart-read path gets dropped for good.
+- This trial temporarily reintroduces the per-ticker chart loop and its token
+  cost — expected and intentional for the comparison window, not a regression.
 
 ## ⚠️ Timing — settled vs provisional (lead with this)
 This runs at 19:00 Israel ≈ **12:00 ET, mid US session**, so today's daily candle
@@ -39,7 +72,16 @@ sections:
    mid-session. Label it explicitly as subject to change before the US close. Do
    NOT issue entries off the provisional bar alone.
 
+Same split applies to the proxy: `get_price_history`'s last bar may be today's
+live/in-progress session, so run `compute_signal.py` twice — once on bars
+truncated to the last fully closed bar (SETTLED, for the comparison table), once
+on the full bars including today's (PROVISIONAL).
+
 ## Selection rules (my mentor's risk management)
+_During the comparison trial, "MA-150" and "entry confirmation" below mean the
+OLD dashboard read (data_get_study_values / data_get_pine_tables) — authoritative.
+Also record `compute_signal.py`'s `ma150` and `entry_confirmed` alongside for the
+comparison table, but they don't change these decisions yet._
 1. Stock MUST trade ABOVE its MA-150 (below = falling knife → reject).
 2. Short Put MUST be OTM, placed BELOW the MA-150 or recent daily swing lows.
    Never sell ATM or above support to force a trade.
@@ -93,6 +135,11 @@ unsettled) changes separately. Produce, in order:
   1:1.5–2.5]. For RADAR rows, list which indicators are 🟢 vs 🔴 (+ override reason).
 - **PROVISIONAL note**: any name whose live mid-session bar differs from its settled state.
 - **Rejects**: grouped one-liners (below MA / no support / interval-reject).
+- **Table 3 — 🔬 SIGNAL COMPARISON (trial only, remove once cut over):** one row
+  per constituent — [Ticker] | [Dashboard אישור כניסה: yes/no] | [Proxy
+  entry_confirmed: yes/no] | [Agree? yes/no] | [If disagree: which of the five
+  proxy checks differ from the dashboard's read, briefly]. This is what decides
+  when the trial ends — do not drop this table until told to.
 
 After the report, on its own final line, emit the screener constituents for the
 stale-feed guard, exactly:
