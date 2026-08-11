@@ -71,6 +71,11 @@ def main():
             "risk_free_rate": 0.045,
             "contract_multiplier": 100.0,
             "exercise_style": "american",
+            # Equity put skew: OTM puts trade richer than flat IV implies.
+            # Without this the short leg is underpriced and spread credit
+            # (hence P&L) is understated.
+            "iv_skew": -0.15,
+            "iv_curvature": 0.05,
         },
     }
 
