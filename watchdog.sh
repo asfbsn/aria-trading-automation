@@ -29,4 +29,4 @@ if [ -f "$LOG" ] && grep -q '^SCREENER_CONSTITUENTS:' "$LOG"; then
   exit 0   # scan completed — nothing to alert
 fi
 
-tg "⚠️ ARIA watchdog: today's (${TODAY}) Bull Put Spread scan did NOT complete by $(date '+%H:%M %Z'). Likely the machine was off at 19:00, cron didn't fire, or Claude usage is exhausted. Check ~/aria-trading/logs/ and run manually with: FORCE_RUN=true ~/aria-trading/daily-scan.sh"
+tg "⚠️ ARIA watchdog: today's (${TODAY}) Bull Put Spread scan did NOT complete by $(date '+%H:%M %Z'). Likely the machine was off at 19:00, cron didn't fire, or Claude usage is exhausted. Check ${ARIA_HOME}/logs/ and run manually with: FORCE_RUN=true ${ARIA_HOME}/daily-scan.sh"

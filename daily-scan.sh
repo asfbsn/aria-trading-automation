@@ -21,7 +21,7 @@ export PATH="$HOME/.local/bin:$HOME/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 # ===========================================================================
 # 0. Configuration  (override anything in ~/aria-trading/.env)
 # ===========================================================================
-ARIA_HOME="${ARIA_HOME:-$HOME/Projects/aria-trading}"
+export ARIA_HOME="${ARIA_HOME:-$HOME/Projects/aria-trading}"
 LOG_DIR="${LOG_DIR:-$ARIA_HOME/logs}"
 STATE_DIR="${STATE_DIR:-$ARIA_HOME/state}"
 PROMPT_FILE="${PROMPT_FILE:-$ARIA_HOME/prompts/bull-put-spread.md}"
@@ -30,36 +30,47 @@ LOCK_FILE="${LOCK_FILE:-$ARIA_HOME/state/daily-scan.lock}"
 
 # Claude project dir = where the tradingview-bridge MCP server is configured
 # (this session's cwd). Run from here so the same MCP servers load.
-CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$HOME/Projects/aria-baby}"
+CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$HOME/Projects/aria-trading}"
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-4-8}"
 
 # Read-only navigation tools + read-only IBKR option-chain tools (to verify PRIME
 # R/R against LIVE prices). We deliberately do NOT allow any order-placement tools
 # (the broker MCP's create_order_instruction / delete_order_instruction).
-CLAUDE_ALLOWED_TOOLS="${CLAUDE_ALLOWED_TOOLS:-\
+#
+# Entry-signal computation: the "Premium Trading Dashboard - Adi Radmy Edition"
+# Pine indicator is protected/invite-only (source unavailable — confirmed
+# 2026-07-09). Replacing it with scripts/compute_signal.py, a local proxy built
+# from the indicator's declared inputs but NOT its exact formulas — so we run
+# BOTH in parallel for a trial window before trusting the proxy solo. Flip
+# SIGNAL_COMPARISON_MODE=false once the comparison report shows the proxy tracks
+# the dashboard closely enough — that drops the old chart/Pine tool grants and
+# the per-ticker chart-render loop entirely (the whole point of the proxy).
+SIGNAL_COMPARISON_MODE="${SIGNAL_COMPARISON_MODE:-true}"
+CLAUDE_ALLOWED_TOOLS_BASE="\
 mcp__tradingview-bridge__tv_health_check,\
 mcp__tradingview-bridge__tv_launch,\
 mcp__tradingview-bridge__ui_find_element,\
 mcp__tradingview-bridge__ui_click,\
 mcp__tradingview-bridge__ui_evaluate,\
+mcp__claude_ai_Interactive_Brokers_IBKR__search_contracts,\
+mcp__claude_ai_Interactive_Brokers_IBKR__get_option_parameters,\
+mcp__claude_ai_Interactive_Brokers_IBKR__get_option_data,\
+mcp__claude_ai_Interactive_Brokers_IBKR__get_price_snapshot,\
+mcp__claude_ai_Interactive_Brokers_IBKR__get_price_history,\
+Bash(python3 ${ARIA_HOME}/scripts/compute_signal.py:*)"
+if [ "$SIGNAL_COMPARISON_MODE" = "true" ]; then
+  CLAUDE_ALLOWED_TOOLS_BASE="${CLAUDE_ALLOWED_TOOLS_BASE},\
 mcp__tradingview-bridge__chart_set_symbol,\
-mcp__tradingview-bridge__chart_set_timeframe,\
 mcp__tradingview-bridge__chart_get_state,\
 mcp__tradingview-bridge__data_get_pine_tables,\
 mcp__tradingview-bridge__data_get_study_values,\
-mcp__tradingview-bridge__data_get_ohlcv,\
-mcp__tradingview-bridge__quote_get,\
-mcp__1410134e-9987-4116-a98c-abba7220532e__search_contracts,\
-mcp__1410134e-9987-4116-a98c-abba7220532e__get_option_parameters,\
-mcp__1410134e-9987-4116-a98c-abba7220532e__get_option_data,\
-mcp__1410134e-9987-4116-a98c-abba7220532e__get_price_snapshot}"
+mcp__tradingview-bridge__data_get_ohlcv"
+fi
+CLAUDE_ALLOWED_TOOLS="${CLAUDE_ALLOWED_TOOLS:-$CLAUDE_ALLOWED_TOOLS_BASE}"
 
-# TradingView Desktop process name + launch command (adjust to your install:
-# native binary, AppImage path, or e.g. 'flatpak run com.tradingview.Desktop').
-TV_PROC_NAME="${TV_PROC_NAME:-TradingView}"
-TV_LAUNCH_CMD="${TV_LAUNCH_CMD:-tradingview}"
-TV_WARMUP_SECS="${TV_WARMUP_SECS:-25}"
+# TradingView launch binary (adjust to your install: native binary, AppImage
+# path, or e.g. 'flatpak run com.tradingview.Desktop').
 
 # If true, exit early (no scan) when the screener constituents are byte-identical
 # to the previous run. Default false: name lists rarely change day-to-day even on
@@ -164,7 +175,7 @@ if cdp_up; then
   echo "[$RUN_TS] CDP already responding on ${CDP_PORT}." >>"$ERR_FILE"
 else
   echo "[$RUN_TS] Starting TradingView with CDP on ${CDP_PORT} ('$TV_BIN')…" >>"$ERR_FILE"
-  pkill -x tradingview 2>/dev/null || true
+  pkill -x "$(basename "$TV_BIN")" 2>/dev/null || true
   sleep 2
   # shellcheck disable=SC2086
   # 9>&- closes the inherited lock fd so the long-lived TradingView process does
@@ -209,7 +220,9 @@ fi
 set +e
 # Prompt goes via stdin: --allowedTools is variadic and would otherwise swallow a
 # trailing positional prompt as a tool name.
-printf '%s' "$PROMPT" | "$CLAUDE_BIN" \
+# Hard cap on the headless run: a hung Claude/TradingView must not hold the
+# lock into tomorrow's cron. timeout exit 124 is treated as a failure below.
+printf '%s' "$PROMPT" | timeout "${CLAUDE_TIMEOUT:-45m}" "$CLAUDE_BIN" \
   --print \
   --model "$CLAUDE_MODEL" \
   --permission-mode default \
