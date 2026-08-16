@@ -35,6 +35,8 @@ unnoticed.
 | `daily-scan.sh` | Main wrapper: env, lock, skip logic, CDP pre-warm, headless Claude run, alerting |
 | `watchdog.sh` | Safety net — alerts if the day's report didn't complete |
 | `prompts/bull-put-spread.md` | The scan prompt (rules, two-table output, settled-vs-provisional) |
+| `prompts/bull-put-spread-ror50.md` | On-demand IBKR-only strike selector: user-given tickers, dynamic spread widths, ROR≥50% gate, lowest-strike-that-clears rule |
+| `prompts/verify-rr-gate.md` | Ad-hoc wiring check for the IBKR R/R gate (1:1.5–2.5 band) |
 | `prompts/smoke-test.md` | Lightweight plumbing/auth check (one ticker) |
 | `us-market-holidays.txt` | NYSE full-day closures to skip (update yearly) |
 | `.env.example` | Template for `.env` (TradingView, GUI, Claude auth, Telegram) |
@@ -49,6 +51,9 @@ chmod +x daily-scan.sh watchdog.sh
 
 # one-off plumbing/auth check (bypasses weekend/holiday guard):
 FORCE_RUN=true PROMPT_FILE="$PWD/prompts/smoke-test.md" ./daily-scan.sh
+
+# on-demand ROR>=50% strike check for specific tickers (fill in section 0 first):
+FORCE_RUN=true PROMPT_FILE="$PWD/prompts/bull-put-spread-ror50.md" ./daily-scan.sh
 
 # install the schedule:
 ( crontab -l 2>/dev/null; cat <<'CRON'
