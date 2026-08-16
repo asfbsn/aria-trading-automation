@@ -59,7 +59,7 @@ class BullPutSpreadSignalEngine:
             open_until = None  # date index string; None = no open position
 
             for i in range(len(df)):
-                if i < MIN_BARS or i + 1 >= len(dates):
+                if i < MIN_BARS or i < 1 or i + 1 >= len(dates):
                     continue
 
                 entry_ts = dates[i + 1]  # fill on the bar AFTER the signal bar

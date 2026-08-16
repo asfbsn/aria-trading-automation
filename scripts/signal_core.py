@@ -55,17 +55,6 @@ def rsi_from_avgs(avg_gain, avg_loss):
     return 100.0 - (100.0 / (1.0 + rs))
 
 
-def detect_candle_pattern(bars):
-    """Bullish engulfing or hammer on the last bar. Shape-based only.
-    bars: list of dicts with open/high/low/close keys."""
-    last = bars[-1]
-    return candle_pattern(
-        last["open"], last["high"], last["low"], last["close"],
-        bars[-2]["open"] if len(bars) >= 2 else None,
-        bars[-2]["close"] if len(bars) >= 2 else None,
-    )
-
-
 def candle_pattern(o, h, l, c, prev_o, prev_c):
     body = abs(c - o)
     rng = h - l

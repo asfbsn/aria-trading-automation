@@ -448,7 +448,7 @@ def run_options_backtest(
                 if len(strikes) >= 2:
                     width = max(strikes) - min(strikes)
                     contracts = max(abs(leg.get("qty", 1)) for leg in legs)
-                    net_credit = sum(p * leg.get("qty", 1)
+                    net_credit = sum(-p * leg.get("qty", 1)
                                      for p, leg in zip(leg_prices, legs))
                     new_reserve = (width - net_credit) * contract_multiplier * contracts
                     open_reserve = 0.0
@@ -574,6 +574,7 @@ def run_options_backtest(
                                 entry_price=matched.entry_price,
                                 entry_date=matched.entry_date,
                                 underlying_code=matched.underlying_code,
+                                group_id=matched.group_id,
                             )
 
         # 4. Compute portfolio mark-to-market value and Greeks
