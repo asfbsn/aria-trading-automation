@@ -1,18 +1,35 @@
 You are running my automated daily Bull Put Spread scan. Use ONLY IBKR read-only
 tools plus the two Bash prefixes below. Apply the trading profile below exactly.
 
+**Before concluding any tool is unavailable: call it.** Do not infer
+unavailability from memory of past sessions, from ToolSearch returning
+nothing (ToolSearch indexes deferred tools; a tool already in your allowed
+set doesn't need searching — just call it directly by name), or from any
+prior run's outcome. This session's tool wiring is independent of what
+happened in earlier ones. If a call genuinely errors, quote the exact error
+in your report — don't paraphrase or generalize it into "tools not
+connected."
+
 ## Universe
 Read `data/universe.csv` (the file itself, via Read — it's already in the repo,
 no fetch needed). Columns: `ticker,sector,approx_mktcap_usd`. This replaces the
-live TradingView "Adi option swing 2.0" screener DOM read: the screener's own
-filters are Region=US, Mkt cap 10B–5T USD, and an "Index" filter checking ~60
+live TradingView "Adi option swing 2.0" screener DOM read for the *membership*
+filters only: Region=US, Mkt cap 10B–5T USD, and an "Index" filter checking ~60
 major US indices that (because Russell 3000 alone covers ~98% of US market cap)
-isn't a narrow membership test — the real constraint is the market-cap band.
-`data/universe.csv` is exactly that band, derived from Russell 1000 constituent
-weights (see `scripts/refresh_universe.py` for the derivation and refresh
-cadence). Scan every ticker in the file — do NOT sample or bound the list, the
-technical filters below do the real narrowing (this file is refreshed every
-1–3 months, not resized to fit a token budget).
+isn't a narrow test on its own — the market-cap band is the real membership
+constraint, and `data/universe.csv` is exactly that band, derived from Russell
+1000 constituent weights (see `scripts/refresh_universe.py`).
+
+The screener panel's remaining filters (confirmed 2026-08-24 from the live
+filter bar) are all *daily technical* conditions, not fixed membership, which
+is why the live screener typically shows ~100 names on a given day against
+this file's ~650: RSI(20) < 50, close 0%–10% BELOW its 50-day SMA, and close
+0%–10% ABOVE its 150-day SMA. `compute_signal.py` (SETTLED output) is the
+authoritative computation of these same three per-ticker — see `checks.rsi_below_50`,
+`checks.near_ma50_pullback`, `checks.near_ma150_support` below. Scan every
+ticker in `data/universe.csv` — do NOT sample or pre-narrow the list yourself,
+those three checks do the real narrowing (this file is refreshed every 1–3
+months, not resized to fit a token budget).
 
 ## Scope
 - **Daily (1D) interval only.**
@@ -35,11 +52,14 @@ technical filters below do the real narrowing (this file is refreshed every
   `compute_signal.py` accepts `get_price_history`'s native parallel-array shape
   (`{"ticker": "...", "time": [...], "open": [...], "high": [...], "low": [...],
   "close": [...], "volume": [...]}`) directly — do NOT hand-transform it into
-  `{"bars": [{"date","open",...}, ...]}` yourself; that reshape is done
-  internally and by hand it's error-prone (index drift across 150+ values).
+  `{"bars": [{"date","open",...}, ...]}` yourself, and do NOT hand-truncate the
+  last bar yourself either; both reshapes are error-prone by hand (index drift
+  across 150+ values) and the allowed Bash scope has no separate transform
+  command to do it safely. Use the `--exclude-last-bar` flag instead (see
+  TIMING below) — the script does the drop internally.
   **Bash permission is scoped to this exact script prefix — invoke it directly
   with a heredoc, not a leading pipe:**
-  `python3 $ARIA_HOME/scripts/compute_signal.py <<'EOF'` / JSON / `EOF`
+  `python3 $ARIA_HOME/scripts/compute_signal.py [--exclude-last-bar] <<'EOF'` / JSON / `EOF`
   (a command starting with `echo ... |` or similar will NOT match the allowed
   prefix and will be blocked).
 - **Earnings proximity is not automated** (no data source wired for it). If you
@@ -50,12 +70,15 @@ technical filters below do the real narrowing (this file is refreshed every
 This runs at 19:00 Israel ≈ **12:00 ET, mid US session**, so today's daily candle
 is **unsettled and can still flip**. `get_price_history`'s last bar may be
 today's live/in-progress session. Structure the report in two clearly separated
-sections, and run `compute_signal.py` **twice** per ticker:
-1. **SETTLED (authoritative)** — bars truncated to the last fully-closed daily
-   bar. This drives every PRIME/RADAR/REJECT decision below.
-2. **PROVISIONAL (today, unsettled)** — the full bars including today's
-   in-progress session. Label it explicitly as subject to change before the US
-   close. Do NOT issue entries off the provisional read alone.
+sections, and run `compute_signal.py` **twice** per ticker on the SAME
+`get_price_history` response (don't re-fetch):
+1. **SETTLED (authoritative)** — `python3 $ARIA_HOME/scripts/compute_signal.py
+   --exclude-last-bar` (drops today's in-progress bar internally; output has
+   `"settled": true`). This drives every PRIME/RADAR/REJECT decision below.
+2. **PROVISIONAL (today, unsettled)** — `python3
+   $ARIA_HOME/scripts/compute_signal.py` (no flag, full bars including today;
+   output has `"settled": false`). Label it explicitly as subject to change
+   before the US close. Do NOT issue entries off the provisional read alone.
 
 ## Selection rules (my mentor's risk management)
 "MA-150", "RSI", "entry confirmation" below all mean `compute_signal.py`'s
@@ -70,11 +93,11 @@ sections, and run `compute_signal.py` **twice** per ticker:
    get 1:2 while keeping the short BELOW support, REJECT — do not force.
 5. Read every check in `compute_signal.py`'s `checks` object, not just
    `entry_confirmed`: `above_ma150`, `rsi_below_50`, `rsi_rising`,
-   `near_ma_support`, `volume_above_avg`, `bullish_candle` (+ `which_ma`,
-   `candle_pattern` for context — these two don't gate). Official entry =
-   `entry_confirmed: true` (all six gating checks pass). Discretionary
+   `near_ma50_pullback`, `near_ma150_support`, `volume_above_avg`,
+   `bullish_candle` (+ `candle_pattern` for context — doesn't gate). Official
+   entry = `entry_confirmed: true` (all seven gating checks pass). Discretionary
    (RADAR) = `entry_confirmed: false` BUT structure strong (`above_ma150`,
-   `near_ma_support`, `volume_above_avg`, no imminent earnings) while only
+   `near_ma150_support`, `volume_above_avg`, no imminent earnings) while only
    momentum/candle checks are weak — flag it, don't discard. List which
    checks are 🟢 vs 🔴.
 6. AI autonomy: you may ALSO flag a "hidden gem" from your own technical read
@@ -120,6 +143,21 @@ unsettled) changes separately. Produce, in order:
 - **PROVISIONAL note**: any name whose live mid-session bar differs from its settled state.
 - **Rejects**: grouped one-liners (below MA / no support / interval-reject).
 
-After the report, on its own final line, emit the tickers actually scanned for
-the stale-feed guard, exactly:
+After the report, emit these THREE lines, each on its own line, in this exact
+order, as the literal last thing you output:
+
 SCREENER_CONSTITUENTS: SYM1,SYM2,SYM3,...
+SIGNALS_COMPLETED: <count of tickers where get_price_history + compute_signal.py
+both ran successfully and produced a checks object — regardless of whether the
+result was PRIME, RADAR, or REJECT>
+SIGNALS_FAILED: <count of tickers you could NOT get a checks object for — a
+tool error, an unavailable connector, a bad/empty price-history response, etc.
+This is NOT the same as "REJECT": a ticker you technically rejected (below
+MA-150, no compliant R/R, ...) still counts as COMPLETED, not FAILED>
+
+SIGNALS_COMPLETED + SIGNALS_FAILED MUST equal the number of tickers in
+`data/universe.csv`. If any ticker failed, list which ones and why in the
+Rejects section — do NOT silently drop it from the count. SIGNALS_FAILED > 0
+means the run is treated as a failure by the wrapper script even if the report
+body looks complete — this is intentional: a real tool/data failure must never
+be reported as a clean run.

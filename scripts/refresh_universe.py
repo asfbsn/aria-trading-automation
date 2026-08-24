@@ -28,7 +28,7 @@ https://www.lseg.com/en/media-centre/press-releases/ftse-russell/ -- search
 market cap -- fine for a wide $10B-$5T band, not precise at the boundary.
 
 Refresh cadence: run this every 1-3 months. Russell 1000 itself only
-reconstitutes semi-annually (main in June, review in November), and the
+reconstitutes semi-annually (main in June, review in December), and the
 wide market-cap band tolerates weight/price drift between refreshes.
 
 Usage: python3 scripts/refresh_universe.py [--mktcap-total <dollars>]

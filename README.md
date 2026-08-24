@@ -77,9 +77,15 @@ CRON
 ```
 
 ### Auth note
-Headless Claude needs auth in `.env`. A subscription `CLAUDE_CODE_OAUTH_TOKEN`
-(`claude setup-token`) works but has a **monthly usage cap**; for set-and-forget
-automation prefer a pay-per-use `ANTHROPIC_API_KEY` (console.anthropic.com).
+Run `claude login` once on this machine and export **nothing** for Claude auth
+in `.env`. Confirmed 2026-08-24 (root cause of 5+ weeks of failed scans):
+exporting `CLAUDE_CODE_OAUTH_TOKEN` (`claude setup-token`) or `ANTHROPIC_API_KEY`
+makes the headless `claude --print` authenticate via that token instead of the
+machine's ambient login session — and a token/API-key session carries no
+claude.ai connector access, so IBKR silently fails to attach on every
+script-invoked run while direct-shell testing (which never exported these
+vars) worked every time. Keep the machine logged in via `claude login`; cron
+inherits the same ambient session.
 
 ### Daily priority overlay (optional)
 Drop a `priority-today.md` with first line `PRIORITY_DATE: YYYY-MM-DD` and a list of

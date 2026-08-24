@@ -5,9 +5,12 @@ and the backtest signal engine (scripts/backtest/bps_signal_engine.py).
 Keep this module dependency-free (no pandas/numpy) so the live path stays lean.
 
 Rule (mirrors prompts/bull-put-spread.md):
-  1. close > MA150                 (never short support from below)
+  1. close > MA150                            (never short support from below)
   2. RSI(20) < 50 and rising vs 2 bars ago
-  3. close within 2% of nearest MA (50 or 150)  (near support)
+  3. close is BELOW MA50 by 0%-10%, AND ABOVE MA150 by 0%-10%  (squeeze between
+     the two averages — pullback zone, real screener filter bands, confirmed
+     2026-08-24 from the live TradingView screener panel; replaces the earlier
+     "within 2% of nearest MA" placeholder, which was an undisclosed-band guess)
   4. volume > 20-bar volume MA
   5. bullish candle (hammer or bullish engulfing)
 """
@@ -15,7 +18,8 @@ Rule (mirrors prompts/bull-put-spread.md):
 RSI_LENGTH = 20
 RSI_THRESHOLD = 50.0
 MA_LENGTHS = (50, 150)
-MA_SUPPORT_BAND = 0.02  # +/-2% — not disclosed by the source indicator, best-effort guess
+MA50_BAND = (0.0, 0.10)   # close is 0%-10% BELOW MA50: (ma50-close)/ma50 in this range
+MA150_BAND = (0.0, 0.10)  # close is 0%-10% ABOVE MA150: (close-ma150)/ma150 in this range
 VOLUME_MA_LENGTH = 20
 MIN_BARS = 150 + 5
 
@@ -86,21 +90,18 @@ def entry_checks(closes, volumes, bars, rsis=None):
     close = closes[-1]
     volume = volumes[-1]
 
-    ma_candidates = [(name, val) for name, val
-                     in (("MA50", ma50), ("MA150", ma150)) if val]
-    nearest_name, nearest_val, nearest_dist = None, None, None
-    for name, val in ma_candidates:
-        dist = abs(close - val) / val
-        if nearest_dist is None or dist < nearest_dist:
-            nearest_name, nearest_val, nearest_dist = name, val, dist
+    below_ma50_pct = (ma50 - close) / ma50 if ma50 else None
+    above_ma150_pct = (close - ma150) / ma150 if ma150 else None
 
     checks = {
         "above_ma150": ma150 is not None and close > ma150,  # rule 1
         "rsi_below_50": rsi_now is not None and rsi_now < RSI_THRESHOLD,
         "rsi_rising": (rsi_now is not None and rsi_prev2 is not None
                        and rsi_now > rsi_prev2),
-        "near_ma_support": nearest_dist is not None and nearest_dist <= MA_SUPPORT_BAND,
-        "which_ma": nearest_name,
+        "near_ma50_pullback": (below_ma50_pct is not None
+                                and MA50_BAND[0] <= below_ma50_pct <= MA50_BAND[1]),
+        "near_ma150_support": (above_ma150_pct is not None
+                                and MA150_BAND[0] <= above_ma150_pct <= MA150_BAND[1]),
         "volume_above_avg": vol_ma20 is not None and volume > vol_ma20,
     }
     pattern = candle_pattern(
@@ -112,5 +113,5 @@ def entry_checks(closes, volumes, bars, rsis=None):
     checks["candle_pattern"] = pattern
 
     confirmed = all(v for k, v in checks.items()
-                    if k not in ("which_ma", "candle_pattern"))
+                    if k != "candle_pattern")
     return checks, confirmed

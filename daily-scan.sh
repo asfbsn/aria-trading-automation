@@ -57,7 +57,7 @@ CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-4-8}"
 # under cron), so there was nothing to validate against; compute_signal.py is
 # now the sole signal source.
 CLAUDE_ALLOWED_TOOLS_BASE="\
-Read(//home/assaf/Projects/aria-trading/data/universe.csv),\
+Read(/${ARIA_HOME}/data/universe.csv),\
 mcp__claude_ai_Interactive_Brokers_IBKR__search_contracts,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_option_parameters,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_option_data,\
@@ -206,13 +206,26 @@ fi
 # ===========================================================================
 # 5. Done — desktop notification
 # ===========================================================================
-# Success requires BOTH a clean exit AND the completion marker the prompt must
-# emit on its final line — otherwise an aborted/stub run (e.g. CDP never came up)
-# would wrongly alert "ready". No marker ⇒ treat as failure.
+# Success requires a clean exit AND a structured completion record proving
+# every universe ticker was actually processed — a loose text-headline check
+# (e.g. grepping for "PRIME|RADAR|REJECT") is bypassable: a clean run that
+# reports an IBKR error as a REJECT for every ticker, while still emitting
+# SCREENER_CONSTITUENTS, would pass a headline check without processing any
+# real signal, and the watchdog would never fire. So require:
+#   1. SIGNALS_COMPLETED + SIGNALS_FAILED both present and parse as integers
+#   2. SIGNALS_FAILED == 0            (any tool/data failure = hard fail)
+#   3. SIGNALS_COMPLETED == universe row count (data/universe.csv minus header)
 set +e   # bulletproof the alert/exit path: never let a stray non-zero (notify-send
          # failing under cron, grep -c returning 1, etc.) trip set -e and skip the alert.
 trap - ERR
-if [ "${CLAUDE_EC:-1}" = "0" ] && grep -q '^SCREENER_CONSTITUENTS:' "$LOG_FILE"; then
+UNIVERSE_COUNT="$(($(wc -l < "$CLAUDE_PROJECT_DIR/data/universe.csv") - 1))"
+SIGNALS_COMPLETED="$(grep -m1 '^SIGNALS_COMPLETED:' "$LOG_FILE" | grep -oE '[0-9]+' | head -1)"
+SIGNALS_FAILED="$(grep -m1 '^SIGNALS_FAILED:' "$LOG_FILE" | grep -oE '[0-9]+' | head -1)"
+if [ "${CLAUDE_EC:-1}" = "0" ] \
+  && grep -q '^SCREENER_CONSTITUENTS:' "$LOG_FILE" \
+  && [ -n "$SIGNALS_COMPLETED" ] && [ -n "$SIGNALS_FAILED" ] \
+  && [ "$SIGNALS_FAILED" = "0" ] \
+  && [ "$SIGNALS_COMPLETED" = "$UNIVERSE_COUNT" ]; then
   notify "ARIA scan ready ✓" "$TODAY — log saved"
   # Put the ACTUAL report (headline + PRIME/RADAR tables) into the message body,
   # not a generic line — and still attach the full file. Trimmed to stay under
@@ -226,6 +239,6 @@ else
   notify "ARIA scan FAILED" "incomplete — see log"
   REASON="$(sed -n '3,6p' "$LOG_FILE" | head -c 800)"
   send_telegram "🔴 ARIA scan FAILED / incomplete — ${TODAY}. Reason: ${REASON:-unknown}. Full log attached." "$LOG_FILE"
-  echo "[$RUN_TS] FAILURE: claude_ec=${CLAUDE_EC:-?}, marker=$(grep -c '^SCREENER_CONSTITUENTS:' "$LOG_FILE" 2>/dev/null || echo 0)" >>"$ERR_FILE"
+  echo "[$RUN_TS] FAILURE: claude_ec=${CLAUDE_EC:-?}, marker=$(grep -c '^SCREENER_CONSTITUENTS:' "$LOG_FILE" 2>/dev/null || echo 0), signals_completed=${SIGNALS_COMPLETED:-?}, signals_failed=${SIGNALS_FAILED:-?}, universe_count=${UNIVERSE_COUNT:-?}" >>"$ERR_FILE"
   exit 1
 fi

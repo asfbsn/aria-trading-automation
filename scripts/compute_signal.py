@@ -9,9 +9,11 @@ menu item is present but unclickable), so its exact internal formulas are
 not available. This reproduces the dashboard's declared *input parameters*
 (RSI length 20 / threshold 50, MA50, MA150, Volume MA length 20 — read off
 the indicator's own Inputs dialog) with best-effort comparison logic for the
-parts the script does not expose (support band width, momentum lookback,
-candle-pattern rules). This is an approximation of Adi's signal, not a
-replica.
+parts the script does not expose (momentum lookback, candle-pattern rules).
+The support band width is NOT a guess — it's `signal_core.py`'s MA50_BAND /
+MA150_BAND, confirmed 2026-08-24 from the live screener's own filter panel
+(close 0%-10% below MA50 AND 0%-10% above MA150). This is an approximation of
+Adi's signal, not a replica.
 
 The entry rule itself lives in scripts/signal_core.py and is shared with the
 backtest engine (scripts/backtest/bps_signal_engine.py) — do NOT duplicate
@@ -28,6 +30,16 @@ Input (stdin): JSON {"ticker": str, "bars": [{"date","open","high","low","close"
 
 Output (stdout): JSON with computed indicators + per-factor checks +
   an aggregate "entry_confirmed" boolean (proxy for "יש אישור כניסה").
+
+Flags:
+  --exclude-last-bar   Drop the most recent bar before computing anything —
+    use for the SETTLED pass when the feed's last bar may still be today's
+    in-progress session (see prompts/bull-put-spread.md's settled-vs-
+    provisional split). Omit for the PROVISIONAL pass (full payload as-is).
+    This can't be done by hand-editing the JSON: the prompt is instructed to
+    pass IBKR's response unmodified (index drift risk across 150+ values), and
+    the allowed Bash scope has no separate transform command — so the drop
+    has to happen inside this script.
 """
 import json
 import sys
@@ -73,14 +85,20 @@ def bars_from_parallel_arrays(payload):
 
 
 def main():
+    exclude_last_bar = "--exclude-last-bar" in sys.argv[1:]
+
     payload = json.load(sys.stdin)
     ticker = payload["ticker"]
     bars = payload["bars"] if "bars" in payload else bars_from_parallel_arrays(payload)
+
+    if exclude_last_bar and bars:
+        bars = bars[:-1]
 
     if len(bars) < MIN_BARS:
         print(json.dumps({
             "ticker": ticker,
             "insufficient_data": True,
+            "settled": exclude_last_bar,
             "bars_provided": len(bars),
             "bars_required": MIN_BARS,
             "entry_confirmed": False,
@@ -103,6 +121,7 @@ def main():
     print(json.dumps({
         "ticker": ticker,
         "insufficient_data": False,
+        "settled": exclude_last_bar,
         "close": closes[-1],
         "rsi20": round(rsi_now, 2) if rsi_now is not None else None,
         "rsi20_2bars_ago": round(rsi_prev2, 2) if rsi_prev2 is not None else None,
