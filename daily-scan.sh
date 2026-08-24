@@ -2,16 +2,23 @@
 #
 # daily-scan.sh — ARIA "Adi option swing 2.0" Bull Put Spread daily scanner
 # ---------------------------------------------------------------------------
-# Drives the LOCAL TradingView Desktop (via the tradingview-bridge MCP) through
-# a headless Claude run, applies the saved Bull-Put-Spread rules, writes a dated
-# log, and pings the desktop when finished.
+# Runs a headless Claude scan against data/universe.csv (a static large/mid-cap
+# US universe standing in for the live TradingView screener — see
+# scripts/refresh_universe.py for why), computes the entry signal locally via
+# scripts/compute_signal.py against IBKR bars, verifies R/R against the live
+# IBKR option chain, writes a dated log, and pings the desktop when finished.
 #
-# SCAFFOLD ONLY — nothing here is activated automatically. To enable later:
-#   chmod +x ~/aria-trading/daily-scan.sh
-#   # then install the crontab line shown in the review notes.
+# No TradingView dependency: this used to drive TradingView Desktop via the
+# tradingview-bridge MCP for both the screener list and the entry-signal
+# dashboard read. Both were replaced (2026-08-24) — the screener list by
+# data/universe.csv, the dashboard read by compute_signal.py — after repeated
+# unattended-session failures (TradingView Desktop crashing/hanging under
+# cron; see git log for scripts/refresh_universe.py and this file). TV stays
+# useful for interactive/ad-hoc work, just not as a hard dependency here.
 #
 # Designed to run from cron (headless), so it explicitly re-establishes the GUI
-# session env (DISPLAY / DBUS / XDG_RUNTIME_DIR) and a sane PATH.
+# session env (DISPLAY / DBUS / XDG_RUNTIME_DIR) and a sane PATH — kept even
+# without TradingView since notify-send still needs it.
 # ---------------------------------------------------------------------------
 set -Eeuo pipefail
 
@@ -28,49 +35,36 @@ PROMPT_FILE="${PROMPT_FILE:-$ARIA_HOME/prompts/bull-put-spread.md}"
 HOLIDAYS_FILE="${HOLIDAYS_FILE:-$ARIA_HOME/us-market-holidays.txt}"
 LOCK_FILE="${LOCK_FILE:-$ARIA_HOME/state/daily-scan.lock}"
 
-# Claude project dir = where the tradingview-bridge MCP server is configured
-# (this session's cwd). Run from here so the same MCP servers load.
+# Claude project dir = where data/universe.csv and scripts/compute_signal.py
+# live (this session's cwd). Run from here so relative paths resolve.
 CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$HOME/Projects/aria-trading}"
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-4-8}"
 
-# Read-only navigation tools + read-only IBKR option-chain tools (to verify PRIME
-# R/R against LIVE prices). We deliberately do NOT allow any order-placement tools
-# (the broker MCP's create_order_instruction / delete_order_instruction).
+# Read-only IBKR option-chain tools (to verify PRIME R/R against LIVE prices)
+# + Read on the static universe file + the scoped compute_signal.py Bash prefix.
+# We deliberately do NOT allow any order-placement tools (the broker MCP's
+# create_order_instruction / delete_order_instruction).
 #
 # Entry-signal computation: the "Premium Trading Dashboard - Adi Radmy Edition"
 # Pine indicator is protected/invite-only (source unavailable — confirmed
-# 2026-07-09). Replacing it with scripts/compute_signal.py, a local proxy built
-# from the indicator's declared inputs but NOT its exact formulas — so we run
-# BOTH in parallel for a trial window before trusting the proxy solo. Flip
-# SIGNAL_COMPARISON_MODE=false once the comparison report shows the proxy tracks
-# the dashboard closely enough — that drops the old chart/Pine tool grants and
-# the per-ticker chart-render loop entirely (the whole point of the proxy).
-SIGNAL_COMPARISON_MODE="${SIGNAL_COMPARISON_MODE:-true}"
+# 2026-07-09) and required a live TradingView chart render to read at all.
+# scripts/compute_signal.py replaces it entirely: a local proxy built from the
+# indicator's declared inputs (not its exact formulas) computed straight from
+# IBKR bars, no TradingView dependency. The former SIGNAL_COMPARISON_MODE trial
+# (running both in parallel) was retired 2026-08-24 — it never completed a
+# single successful comparison run in 5+ weeks (TradingView kept crashing
+# under cron), so there was nothing to validate against; compute_signal.py is
+# now the sole signal source.
 CLAUDE_ALLOWED_TOOLS_BASE="\
-mcp__tradingview-bridge__tv_health_check,\
-mcp__tradingview-bridge__tv_launch,\
-mcp__tradingview-bridge__ui_find_element,\
-mcp__tradingview-bridge__ui_click,\
-mcp__tradingview-bridge__ui_evaluate,\
+Read(//home/assaf/Projects/aria-trading/data/universe.csv),\
 mcp__claude_ai_Interactive_Brokers_IBKR__search_contracts,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_option_parameters,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_option_data,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_price_snapshot,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_price_history,\
 Bash(python3 ${ARIA_HOME}/scripts/compute_signal.py:*)"
-if [ "$SIGNAL_COMPARISON_MODE" = "true" ]; then
-  CLAUDE_ALLOWED_TOOLS_BASE="${CLAUDE_ALLOWED_TOOLS_BASE},\
-mcp__tradingview-bridge__chart_set_symbol,\
-mcp__tradingview-bridge__chart_get_state,\
-mcp__tradingview-bridge__data_get_pine_tables,\
-mcp__tradingview-bridge__data_get_study_values,\
-mcp__tradingview-bridge__data_get_ohlcv"
-fi
 CLAUDE_ALLOWED_TOOLS="${CLAUDE_ALLOWED_TOOLS:-$CLAUDE_ALLOWED_TOOLS_BASE}"
-
-# TradingView launch binary (adjust to your install: native binary, AppImage
-# path, or e.g. 'flatpak run com.tradingview.Desktop').
 
 # If true, exit early (no scan) when the screener constituents are byte-identical
 # to the previous run. Default false: name lists rarely change day-to-day even on
@@ -82,21 +76,12 @@ HARD_SKIP_ON_UNCHANGED="${HARD_SKIP_ON_UNCHANGED:-false}"
 [ -f "$ARIA_HOME/.env" ] && source "$ARIA_HOME/.env"
 
 # ===========================================================================
-# 1. GUI session env so a headless cron shell can launch GUI apps + notify-send
+# 1. GUI session env so a headless cron shell can reach notify-send
 # ===========================================================================
 export DISPLAY="${DISPLAY:-:0}"
 UID_NUM="$(id -u)"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/${UID_NUM}}"
 export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${XDG_RUNTIME_DIR}/bus}"
-# Wayland session vars — TradingView's Electron runtime needs these to start
-# headless (the app uses --ozone-platform=wayland). Without WAYLAND_DISPLAY the
-# app fails to come up and CDP never binds.
-export WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-0}"
-export XDG_SESSION_TYPE="${XDG_SESSION_TYPE:-wayland}"
-if [ -z "${XAUTHORITY:-}" ]; then
-  _xa="$(ls -t "${XDG_RUNTIME_DIR}"/.mutter-Xwaylandauth* 2>/dev/null | head -n1 || true)"
-  [ -n "$_xa" ] && export XAUTHORITY="$_xa"
-fi
 
 notify() {  # no-op if notify-send is missing
   command -v notify-send >/dev/null 2>&1 && notify-send -a "ARIA Scan" "$1" "${2:-}" || true
@@ -155,44 +140,7 @@ else
 fi
 
 # ===========================================================================
-# 3. Ensure TradingView Desktop is up.
-#    Readiness is delegated to the bridge's tv_health_check / tv_launch (invoked
-#    by the headless Claude run below) — far more reliable than a process-name
-#    guess (pgrep -f matched the MCP/bridge/claude processes here, not the GUI
-#    app). Optional cold-start via bash is behind TV_BASH_LAUNCH for setups where
-#    the app must exist before the bridge can attach.
-# ===========================================================================
-# Bring TradingView up WITH the CDP debug port, deterministically, in bash —
-# then poll until the port answers, so Claude's tv_health_check just connects.
-# Delegating cold-start to the headless agent proved flaky (CDP wouldn't bind).
-# The KEY is launching WITH the right flags: a plain `tradingview` (no
-# --remote-debugging-port) is what broke the bridge before; these flags fix it.
-# --remote-allow-origins=* is required for CDP on Chromium/Electron 111+.
-CDP_PORT="${CDP_PORT:-9222}"
-TV_BIN="${TV_BIN:-tradingview}"
-cdp_up() { curl -s -m 2 "http://127.0.0.1:${CDP_PORT}/json/version" >/dev/null 2>&1; }
-if cdp_up; then
-  echo "[$RUN_TS] CDP already responding on ${CDP_PORT}." >>"$ERR_FILE"
-else
-  echo "[$RUN_TS] Starting TradingView with CDP on ${CDP_PORT} ('$TV_BIN')…" >>"$ERR_FILE"
-  pkill -x "$(basename "$TV_BIN")" 2>/dev/null || true
-  sleep 2
-  # shellcheck disable=SC2086
-  # 9>&- closes the inherited lock fd so the long-lived TradingView process does
-  # NOT keep holding the run lock after this script exits (that bug made the next
-  # cron run exit with "Another run holds the lock").
-  nohup "$TV_BIN" --remote-debugging-port="${CDP_PORT}" "--remote-allow-origins=*" >/dev/null 2>&1 9>&- &
-  for _ in $(seq 1 30); do cdp_up && break; sleep 2; done
-  if cdp_up; then
-    echo "[$RUN_TS] CDP up after warm-up." >>"$ERR_FILE"
-  else
-    echo "[$RUN_TS] WARNING: CDP not up after ~60s — the run will likely fail." >>"$ERR_FILE"
-    notify "ARIA scan" "TradingView CDP not ready — run may fail"
-  fi
-fi
-
-# ===========================================================================
-# 4. Headless Claude scan against the "Adi option swing 2.0" screener
+# 3. Headless Claude scan against data/universe.csv
 # ===========================================================================
 cd "$CLAUDE_PROJECT_DIR"
 PROMPT="$(cat "$PROMPT_FILE")"
@@ -232,7 +180,7 @@ CLAUDE_EC=${PIPESTATUS[1]}
 set -e
 
 # ===========================================================================
-# 5. "Unchanged screener" guard (stale/frozen-feed detector)
+# 4. "Unchanged screener" guard (stale/frozen-feed detector)
 #    The prompt emits a line:  SCREENER_CONSTITUENTS: SYM1,SYM2,...
 # ===========================================================================
 LAST_HASH_FILE="$STATE_DIR/last-constituents.sha"
@@ -256,7 +204,7 @@ if [ -n "$SYMS_LINE" ]; then
 fi
 
 # ===========================================================================
-# 6. Done — desktop notification
+# 5. Done — desktop notification
 # ===========================================================================
 # Success requires BOTH a clean exit AND the completion marker the prompt must
 # emit on its final line — otherwise an aborted/stub run (e.g. CDP never came up)

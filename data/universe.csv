@@ -1,0 +1,655 @@
+ticker,sector,approx_mktcap_usd
+AAPL,Information Technology,4542300000000
+MSFT,Information Technology,3648260000000
+AMZN,Consumer Discretionary,2552340000000
+GOOGL,Communication,2040430000000
+AVGO,Information Technology,1744820000000
+GOOG,Communication,1651090000000
+META,Communication,1225700000000
+MU,Information Technology,1110340000000
+TSLA,Consumer Discretionary,1074290000000
+LLY,Health Care,1016610000000
+JPM,Financials,951720000000
+BRKB,Financials,937300000000
+AMD,Information Technology,778680000000
+XOM,Energy,699370000000
+JNJ,Health Care,663320000000
+V,Financials,620060000000
+ABBV,Health Care,475860000000
+MA,Financials,475860000000
+WMT,Consumer Staples,461440000000
+CSCO,Information Technology,447020000000
+COST,Consumer Staples,425390000000
+INTC,Information Technology,418180000000
+BAC,Financials,418180000000
+PLTR,Information Technology,403760000000
+LRCX,Information Technology,396550000000
+AMAT,Information Technology,396550000000
+CVX,Energy,389340000000
+MRK,Health Care,382130000000
+CAT,Industrials,382130000000
+GE,Industrials,367710000000
+KO,Consumer Staples,360500000000
+UNH,Health Care,360500000000
+PG,Consumer Staples,346080000000
+HD,Consumer Discretionary,338870000000
+NFLX,Communication,338870000000
+GS,Financials,302820000000
+PM,Consumer Staples,295610000000
+PANW,Information Technology,295610000000
+RTX,Industrials,288400000000
+GEV,Industrials,259560000000
+WFC,Financials,259560000000
+ORCL,Information Technology,252350000000
+KLAC,Information Technology,245140000000
+TXN,Information Technology,245140000000
+MS,Financials,245140000000
+AMGN,Health Care,237930000000
+TMO,Health Care,237930000000
+SNDK,Information Technology,237930000000
+LIN,Materials,230720000000
+C,Financials,230720000000
+IBM,Information Technology,223510000000
+VZ,Communication,209090000000
+MRVL,Information Technology,209090000000
+ABT,Health Care,201880000000
+ANET,Information Technology,201880000000
+PEP,Consumer Staples,201880000000
+CRWD,Information Technology,194670000000
+MCD,Consumer Discretionary,194670000000
+APH,Information Technology,194670000000
+DIS,Communication,194670000000
+SCHW,Financials,187460000000
+UNP,Industrials,187460000000
+ADI,Information Technology,187460000000
+GILD,Health Care,187460000000
+AXP,Financials,180250000000
+BLK,Financials,180250000000
+NEE,Utilities,180250000000
+T,Communication,173040000000
+QCOM,Information Technology,173040000000
+WELL,Real Estate,173040000000
+CRM,Information Technology,165830000000
+COP,Energy,165830000000
+ETN,Industrials,165830000000
+BA,Industrials,165830000000
+BKNG,Consumer Discretionary,165830000000
+DE,Industrials,165830000000
+PFE,Health Care,165830000000
+WDC,Information Technology,158620000000
+TJX,Consumer Discretionary,158620000000
+UBER,Industrials,158620000000
+NEM,Materials,144200000000
+VRTX,Health Care,144200000000
+DHR,Health Care,136990000000
+BMY,Health Care,136990000000
+COF,Financials,136990000000
+PLD,Real Estate,136990000000
+ISRG,Health Care,136990000000
+DELL,Industrials,136990000000
+NOW,Information Technology,136990000000
+PGR,Financials,129780000000
+SPGI,Financials,129780000000
+PH,Industrials,129780000000
+SBUX,Consumer Discretionary,122570000000
+LOW,Consumer Discretionary,122570000000
+CB,Financials,122570000000
+MDT,Health Care,122570000000
+CVS,Health Care,122570000000
+GLW,Information Technology,122570000000
+LMT,Industrials,115360000000
+SYK,Health Care,115360000000
+ACN,Information Technology,115360000000
+ADP,Industrials,115360000000
+SNOW,Information Technology,115360000000
+ADBE,Information Technology,115360000000
+MO,Consumer Staples,115360000000
+FCX,Materials,108150000000
+BNY,Financials,108150000000
+HWM,Industrials,108150000000
+BX,Financials,108150000000
+MPC,Energy,108150000000
+MCK,Health Care,108150000000
+EQIX,Real Estate,108150000000
+VLO,Energy,108150000000
+SO,Utilities,100940000000
+VRT,Industrials,100940000000
+TT,Industrials,100940000000
+CME,Financials,100940000000
+INTU,Information Technology,100940000000
+GD,Industrials,100940000000
+PNC,Financials,100940000000
+PSX,Energy,100940000000
+USB,Financials,100940000000
+CSX,Industrials,100940000000
+PWR,Industrials,93730000000
+CMCSA,Communication,93730000000
+MMM,Industrials,93730000000
+DUK,Utilities,93730000000
+FTNT,Information Technology,93730000000
+NET,Information Technology,93730000000
+MRSH,Financials,93730000000
+ICE,Financials,93730000000
+TMUS,Communication,93730000000
+EMR,Industrials,86520000000
+CDNS,Information Technology,86520000000
+JCI,Industrials,86520000000
+CEG,Utilities,86520000000
+ELV,Health Care,86520000000
+WMB,Energy,86520000000
+REGN,Health Care,86520000000
+SPOT,Communication,86520000000
+DASH,Consumer Discretionary,86520000000
+WM,Industrials,86520000000
+HOOD,Financials,86520000000
+MDLZ,Consumer Staples,86520000000
+EOG,Energy,86520000000
+AMT,Real Estate,86520000000
+ITW,Industrials,79310000000
+CMI,Industrials,79310000000
+SLB,Energy,79310000000
+SHW,Materials,79310000000
+MSI,Information Technology,79310000000
+NSC,Industrials,79310000000
+GM,Consumer Discretionary,79310000000
+MAR,Consumer Discretionary,79310000000
+ABNB,Consumer Discretionary,79310000000
+DDOG,Information Technology,79310000000
+TRV,Financials,79310000000
+UPS,Industrials,79310000000
+MCO,Financials,79310000000
+ROST,Consumer Discretionary,79310000000
+TGT,Consumer Staples,79310000000
+BSX,Health Care,79310000000
+KKR,Financials,72100000000
+SNPS,Information Technology,72100000000
+ORLY,Consumer Discretionary,72100000000
+AON,Financials,72100000000
+RCL,Consumer Discretionary,72100000000
+APP,Communication,72100000000
+NOC,Industrials,72100000000
+HLT,Consumer Discretionary,72100000000
+SPCX,Communication,72100000000
+CI,Health Care,72100000000
+CL,Consumer Staples,72100000000
+FDX,Industrials,72100000000
+HPE,Information Technology,72100000000
+ECL,Materials,72100000000
+SPG,Real Estate,72100000000
+CTAS,Industrials,72100000000
+DLR,Real Estate,72100000000
+WBD,Communication,72100000000
+URI,Industrials,72100000000
+HON,Industrials,72100000000
+PCAR,Industrials,72100000000
+AJG,Financials,72100000000
+MNST,Consumer Staples,64890000000
+TDG,Industrials,64890000000
+APD,Materials,64890000000
+AEP,Utilities,64890000000
+ALL,Financials,64890000000
+HCA,Health Care,64890000000
+CRH,Materials,64890000000
+TRGP,Energy,64890000000
+TFC,Financials,64890000000
+MPWR,Information Technology,64890000000
+BKR,Energy,64890000000
+LITE,Information Technology,64890000000
+AU,Materials,64890000000
+KMI,Energy,64890000000
+COR,Health Care,57680000000
+FAST,Industrials,57680000000
+TER,Information Technology,57680000000
+OKE,Energy,57680000000
+D,Utilities,57680000000
+O,Real Estate,57680000000
+LNG,Energy,57680000000
+FIX,Industrials,57680000000
+GWW,Industrials,57680000000
+F,Consumer Discretionary,57680000000
+APO,Financials,57680000000
+CIEN,Information Technology,57680000000
+DVN,Energy,57680000000
+CTVA,Materials,57680000000
+AME,Industrials,57680000000
+PYPL,Financials,57680000000
+BDX,Health Care,57680000000
+SRE,Utilities,57680000000
+PSA,Real Estate,57680000000
+BE,Industrials,57680000000
+KEYS,Information Technology,57680000000
+DAL,Industrials,57680000000
+CAH,Health Care,57680000000
+NUE,Materials,57680000000
+ADSK,Information Technology,57680000000
+AFL,Financials,50470000000
+MRNA,Health Care,50470000000
+HONA,Industrials,50470000000
+COHR,Information Technology,50470000000
+EW,Health Care,50470000000
+MET,Financials,50470000000
+VMRK,Real Estate,50470000000
+WAB,Industrials,50470000000
+NU,Financials,50470000000
+AMP,Financials,50470000000
+STT,Financials,50470000000
+LHX,Industrials,50470000000
+FITB,Financials,50470000000
+ROK,Industrials,50470000000
+AZO,Consumer Discretionary,50470000000
+GRMN,Consumer Discretionary,50470000000
+AXON,Industrials,50470000000
+CVNA,Consumer Discretionary,50470000000
+NKE,Consumer Discretionary,50470000000
+ETR,Utilities,50470000000
+XEL,Utilities,50470000000
+USD,Cash and/or Derivatives,50470000000
+CARR,Industrials,50470000000
+CMG,Consumer Discretionary,50470000000
+FERG,Industrials,50470000000
+EBAY,Consumer Discretionary,50470000000
+VST,Utilities,43260000000
+NTRA,Health Care,43260000000
+HUM,Health Care,43260000000
+EXC,Utilities,43260000000
+VTR,Real Estate,43260000000
+A,Health Care,43260000000
+OXY,Energy,43260000000
+CBRE,Real Estate,43260000000
+TTWO,Communication,43260000000
+IDXX,Health Care,43260000000
+RSG,Industrials,43260000000
+NDAQ,Financials,43260000000
+ALAB,Information Technology,43260000000
+IQV,Health Care,43260000000
+XYZ,Financials,43260000000
+YUM,Consumer Discretionary,43260000000
+PRU,Financials,43260000000
+ROP,Information Technology,43260000000
+KDP,Consumer Staples,43260000000
+WDAY,Information Technology,43260000000
+COIN,Financials,43260000000
+IBKR,Financials,43260000000
+MCHP,Information Technology,43260000000
+AIG,Financials,43260000000
+FLEX,Information Technology,43260000000
+RVMD,Health Care,43260000000
+FANG,Energy,43260000000
+WAT,Health Care,43260000000
+SYY,Consumer Staples,43260000000
+PAYX,Industrials,43260000000
+MSCI,Financials,43260000000
+XTSLA,Cash and/or Derivatives,43260000000
+ED,Utilities,43260000000
+MSTR,Information Technology,36050000000
+RKLB,Industrials,36050000000
+ADM,Consumer Staples,36050000000
+ODFL,Industrials,36050000000
+PCG,Utilities,36050000000
+CRDO,Information Technology,36050000000
+NTAP,Information Technology,36050000000
+VEEV,Health Care,36050000000
+DHI,Consumer Discretionary,36050000000
+HIG,Financials,36050000000
+EXPE,Consumer Discretionary,36050000000
+UAL,Industrials,36050000000
+IRM,Real Estate,36050000000
+PEG,Utilities,36050000000
+KVUE,Consumer Staples,36050000000
+KMB,Consumer Staples,36050000000
+VMC,Materials,36050000000
+DXCM,Health Care,36050000000
+MTB,Financials,36050000000
+WEC,Utilities,36050000000
+ACGL,Financials,36050000000
+HBAN,Financials,36050000000
+EME,Industrials,36050000000
+P,Information Technology,36050000000
+GEHC,Health Care,36050000000
+NTRS,Financials,36050000000
+RMD,Health Care,36050000000
+MDB,Information Technology,36050000000
+ILMN,Health Care,36050000000
+TWLO,Information Technology,36050000000
+CCI,Real Estate,36050000000
+JBL,Information Technology,36050000000
+CCL,Consumer Discretionary,36050000000
+ZTS,Health Care,36050000000
+EQT,Energy,36050000000
+KR,Consumer Staples,36050000000
+WTW,Financials,36050000000
+CNC,Health Care,36050000000
+CBOE,Financials,36050000000
+BIIB,Health Care,36050000000
+MLM,Materials,28840000000
+SUNB,Industrials,28840000000
+IR,Industrials,28840000000
+ALNY,Health Care,28840000000
+CASY,Consumer Staples,28840000000
+RJF,Financials,28840000000
+STLD,Materials,28840000000
+EXR,Real Estate,28840000000
+FTI,Energy,28840000000
+CRWV,Information Technology,28840000000
+CPRT,Industrials,28840000000
+CFG,Financials,28840000000
+AEE,Utilities,28840000000
+HAL,Energy,28840000000
+CTSH,Information Technology,28840000000
+TDY,Information Technology,28840000000
+ON,Information Technology,28840000000
+LPLA,Financials,28840000000
+TEAM,Information Technology,28840000000
+LYV,Communication,28840000000
+ZM,Information Technology,28840000000
+VICI,Real Estate,28840000000
+DTE,Utilities,28840000000
+MTD,Health Care,28840000000
+ATI,Industrials,28840000000
+WSM,Consumer Discretionary,28840000000
+FISV,Financials,28840000000
+QSR,Consumer Discretionary,28840000000
+ARES,Financials,28840000000
+LH,Health Care,28840000000
+ATO,Utilities,28840000000
+OTIS,Industrials,28840000000
+EIX,Utilities,28840000000
+DG,Consumer Staples,28840000000
+HSY,Consumer Staples,28840000000
+Q,Information Technology,28840000000
+HPQ,Information Technology,28840000000
+INSM,Health Care,28840000000
+DGX,Health Care,28840000000
+DOV,Industrials,28840000000
+XYL,Industrials,28840000000
+SYF,Financials,28840000000
+ES,Utilities,28840000000
+CPAY,Financials,28840000000
+AWK,Utilities,28840000000
+FICO,Information Technology,28840000000
+TPR,Consumer Discretionary,28840000000
+RF,Financials,28840000000
+PPL,Utilities,28840000000
+SW,Materials,28840000000
+FE,Utilities,28840000000
+CINF,Financials,28840000000
+CNP,Utilities,28840000000
+RPRX,Health Care,28840000000
+DRI,Consumer Discretionary,28840000000
+PPG,Materials,28840000000
+EL,Consumer Staples,28840000000
+EXPD,Industrials,21630000000
+HUBB,Industrials,21630000000
+OMC,Communication,21630000000
+WST,Health Care,21630000000
+VRSK,Industrials,21630000000
+NVT,Industrials,21630000000
+PHM,Consumer Discretionary,21630000000
+RBLX,Communication,21630000000
+DLTR,Consumer Staples,21630000000
+VLTO,Industrials,21630000000
+USFD,Consumer Staples,21630000000
+THC,Health Care,21630000000
+SOFI,Financials,21630000000
+CRS,Industrials,21630000000
+PFG,Financials,21630000000
+CW,Industrials,21630000000
+TROW,Financials,21630000000
+STE,Health Care,21630000000
+CHD,Consumer Staples,21630000000
+DOW,Materials,21630000000
+NRG,Utilities,21630000000
+VRSN,Information Technology,21630000000
+OKTA,Information Technology,21630000000
+EFX,Industrials,21630000000
+FWONK,Communication,21630000000
+TPL,Energy,21630000000
+ULTA,Consumer Discretionary,21630000000
+XPO,Industrials,21630000000
+MKL,Financials,21630000000
+AMCR,Materials,21630000000
+EXE,Energy,21630000000
+RGLD,Materials,21630000000
+IP,Materials,21630000000
+FFIV,Information Technology,21630000000
+KHC,Consumer Staples,21630000000
+PKG,Materials,21630000000
+FSLR,Information Technology,21630000000
+IFF,Materials,21630000000
+GH,Health Care,21630000000
+ENTG,Information Technology,21630000000
+FIS,Financials,21630000000
+BRO,Financials,21630000000
+AFRM,Financials,21630000000
+CDE,Materials,21630000000
+GPN,Financials,21630000000
+GIS,Consumer Staples,21630000000
+FTAI,Industrials,21630000000
+UTHR,Health Care,21630000000
+INCY,Health Care,21630000000
+BR,Industrials,21630000000
+CMS,Utilities,21630000000
+SMCI,Information Technology,21630000000
+JBHT,Industrials,21630000000
+ROKU,Communication,21630000000
+WWD,Industrials,21630000000
+RDDT,Communication,21630000000
+CPNG,Consumer Discretionary,21630000000
+BURL,Consumer Discretionary,21630000000
+KEY,Financials,21630000000
+SCCO,Materials,21630000000
+BAM,Financials,21630000000
+SNA,Industrials,21630000000
+CF,Materials,21630000000
+RS,Materials,21630000000
+HEIA,Industrials,21630000000
+NI,Utilities,21630000000
+ZBH,Health Care,21630000000
+VTRS,Health Care,21630000000
+SNX,Information Technology,21630000000
+SBAC,Real Estate,21630000000
+ZS,Information Technology,21630000000
+DD,Industrials,21630000000
+OVV,Energy,21630000000
+PR,Energy,21630000000
+LUV,Industrials,21630000000
+EVRG,Utilities,21630000000
+STZ,Consumer Staples,21630000000
+MKSI,Information Technology,21630000000
+PTC,Information Technology,21630000000
+GPC,Consumer Discretionary,21630000000
+ESS,Real Estate,21630000000
+ITT,Industrials,21630000000
+L,Financials,21630000000
+TSCO,Consumer Discretionary,21630000000
+FTV,Industrials,21630000000
+LEN,Consumer Discretionary,21630000000
+EWBC,Financials,21630000000
+INVH,Real Estate,21630000000
+MTSI,Information Technology,21630000000
+JLL,Real Estate,21630000000
+ROIV,Health Care,14420000000
+ZBRA,Information Technology,14420000000
+LDOS,Industrials,14420000000
+ASTS,Communication,14420000000
+LNT,Utilities,14420000000
+FCNCA,Financials,14420000000
+CDW,Information Technology,14420000000
+WY,Real Estate,14420000000
+NDSN,Industrials,14420000000
+J,Industrials,14420000000
+TOST,Financials,14420000000
+NTNX,Information Technology,14420000000
+IEX,Industrials,14420000000
+IONQ,Information Technology,14420000000
+LYB,Materials,14420000000
+WCC,Industrials,14420000000
+SSNC,Industrials,14420000000
+NLY,Financials,14420000000
+U,Information Technology,14420000000
+BALL,Materials,14420000000
+ALB,Materials,14420000000
+CHRW,Industrials,14420000000
+BBY,Consumer Discretionary,14420000000
+NVR,Consumer Discretionary,14420000000
+MTZ,Industrials,14420000000
+TRU,Industrials,14420000000
+CHTR,Communication,14420000000
+VIK,Consumer Discretionary,14420000000
+LSCC,Information Technology,14420000000
+RBA,Industrials,14420000000
+GWRE,Information Technology,14420000000
+RGA,Financials,14420000000
+TSN,Consumer Staples,14420000000
+KIM,Real Estate,14420000000
+CLH,Industrials,14420000000
+HST,Real Estate,14420000000
+AKAM,Information Technology,14420000000
+GEN,Information Technology,14420000000
+PFGC,Consumer Staples,14420000000
+ARMK,Consumer Discretionary,14420000000
+RBC,Industrials,14420000000
+CRCL,Information Technology,14420000000
+APG,Industrials,14420000000
+WPC,Real Estate,14420000000
+SWK,Industrials,14420000000
+FN,Information Technology,14420000000
+WRB,Financials,14420000000
+STRL,Industrials,14420000000
+RBRK,Information Technology,14420000000
+MDLN,Health Care,14420000000
+APA,Energy,14420000000
+RIVN,Consumer Discretionary,14420000000
+MAA,Real Estate,14420000000
+NBIX,Health Care,14420000000
+BG,Consumer Staples,14420000000
+JAZZ,Health Care,14420000000
+HEI,Industrials,14420000000
+DINO,Energy,14420000000
+SN,Consumer Discretionary,14420000000
+SUI,Real Estate,14420000000
+PNFP,Financials,14420000000
+LECO,Industrials,14420000000
+DOC,Real Estate,14420000000
+FDXF,Industrials,14420000000
+COO,Health Care,14420000000
+MAS,Industrials,14420000000
+TYL,Information Technology,14420000000
+CSL,Industrials,14420000000
+DT,Information Technology,14420000000
+EG,Financials,14420000000
+FLUT,Consumer Discretionary,14420000000
+CRL,Health Care,14420000000
+AIZ,Financials,14420000000
+ONTO,Information Technology,14420000000
+TLN,Utilities,14420000000
+AVY,Materials,14420000000
+TXT,Industrials,14420000000
+MEDP,Health Care,14420000000
+CACI,Industrials,14420000000
+BWXT,Industrials,14420000000
+MKC,Consumer Staples,14420000000
+EQH,Financials,14420000000
+TRMB,Information Technology,14420000000
+RVTY,Health Care,14420000000
+OHI,Real Estate,14420000000
+UNM,Financials,14420000000
+ALLE,Industrials,14420000000
+RL,Consumer Discretionary,14420000000
+BWA,Consumer Discretionary,14420000000
+TOL,Consumer Discretionary,14420000000
+RPM,Materials,14420000000
+REG,Real Estate,14420000000
+BBIO,Health Care,14420000000
+MLI,Industrials,14420000000
+FIVE,Consumer Discretionary,14420000000
+IOT,Information Technology,14420000000
+TXRH,Consumer Discretionary,14420000000
+RNR,Financials,14420000000
+SITM,Information Technology,14420000000
+FOXA,Communication,14420000000
+AA,Materials,14420000000
+RKT,Financials,14420000000
+IREN,Information Technology,14420000000
+BAX,Health Care,14420000000
+EXEL,Health Care,14420000000
+GGG,Industrials,14420000000
+GL,Financials,14420000000
+CCK,Materials,14420000000
+SOLV,Health Care,14420000000
+HAS,Consumer Discretionary,14420000000
+SGI,Consumer Discretionary,14420000000
+HL,Materials,14420000000
+CSGP,Real Estate,14420000000
+QXO,Industrials,14420000000
+CG,Financials,14420000000
+LVS,Consumer Discretionary,14420000000
+LII,Industrials,14420000000
+DECK,Consumer Discretionary,14420000000
+DTM,Energy,14420000000
+MANH,Information Technology,14420000000
+LAMR,Real Estate,14420000000
+BMNR,Information Technology,14420000000
+SJM,Consumer Staples,14420000000
+CLX,Consumer Staples,14420000000
+GDDY,Information Technology,14420000000
+IT,Information Technology,14420000000
+NXT,Industrials,14420000000
+HALO,Health Care,14420000000
+DKNG,Consumer Discretionary,14420000000
+TW,Financials,14420000000
+BMRN,Health Care,14420000000
+ASND,Health Care,14420000000
+AIT,Industrials,14420000000
+AGNC,Financials,14420000000
+ELS,Real Estate,14420000000
+BJ,Consumer Staples,14420000000
+JKHY,Financials,14420000000
+FNF,Financials,14420000000
+PEN,Health Care,14420000000
+HUBS,Information Technology,14420000000
+UDR,Real Estate,14420000000
+SF,Financials,14420000000
+LULU,Consumer Discretionary,14420000000
+DOCU,Information Technology,14420000000
+ALLY,Financials,14420000000
+GNRC,Industrials,14420000000
+TKO,Communication,14420000000
+ECHO,Communication,14420000000
+GLPI,Real Estate,14420000000
+EHC,Health Care,14420000000
+OC,Industrials,14420000000
+ELAN,Health Care,14420000000
+ARWR,Health Care,14420000000
+AMH,Real Estate,14420000000
+HII,Industrials,14420000000
+DKS,Consumer Discretionary,14420000000
+PNW,Utilities,14420000000
+DY,Industrials,14420000000
+FHN,Financials,14420000000
+TECH,Health Care,14420000000
+CORT,Health Care,14420000000
+SMTC,Information Technology,14420000000
+WTRG,Utilities,14420000000
+PINS,Communication,14420000000
+IVZ,Financials,14420000000
+TTMI,Information Technology,14420000000
+NWSA,Communication,14420000000
+SEIC,Financials,14420000000
+ALSN,Industrials,14420000000
+ROL,Industrials,14420000000
+SCI,Consumer Discretionary,14420000000
+KNX,Industrials,14420000000
+RRX,Industrials,14420000000
+AR,Energy,14420000000
+BPOP,Financials,14420000000
+WSO,Industrials,14420000000
+DCI,Industrials,14420000000
+FDS,Financials,14420000000
+ALGN,Health Care,14420000000
+COKE,Consumer Staples,14420000000
+AEIS,Information Technology,14420000000
+EVR,Financials,14420000000
+ARW,Information Technology,14420000000
+GFL,Industrials,14420000000
+AHR,Real Estate,14420000000

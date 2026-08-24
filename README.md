@@ -1,10 +1,18 @@
 # ARIA — Daily Bull Put Spread Scanner
 
-Automated, unattended scanner that evaluates the TradingView **"Adi option swing 2.0"**
-screener every trading day and delivers a two-table Bull Put Spread report (desktop
-notification + Telegram). It drives a local **TradingView Desktop** through the
-[`tradingview-bridge`](https://github.com/tradesdontlie/tradingview-mcp) MCP server,
-run by a headless Claude process.
+Automated, unattended scanner that evaluates a static large/mid-cap US universe
+every trading day and delivers a two-table Bull Put Spread report (desktop
+notification + Telegram). Entry signal and option-chain verification run
+against **IBKR** data only, via a headless Claude process — no TradingView
+dependency in the automated path.
+
+> This used to drive TradingView Desktop live (via the `tradingview-bridge`
+> MCP) for both the screener list and the entry-signal dashboard read. Both
+> were replaced 2026-08-24 after TradingView Desktop repeatedly crashed or
+> hung under cron for 5+ weeks straight. See `scripts/refresh_universe.py`
+> and `scripts/compute_signal.py` for what replaced them. TradingView Desktop
+> is still useful interactively (ad-hoc chart/Pine work) — it's just no
+> longer a hard dependency for the daily scan.
 
 > ⚠️ **Advisory only.** The scan never places trades. Broker/order tools are
 > deliberately excluded from its allow-list. Live IBKR orders are always *staged*
@@ -12,13 +20,13 @@ run by a headless Claude process.
 
 ## What it does (each weekday 19:00 Israel)
 
-1. **Pre-warm** TradingView Desktop with the CDP debug port (`--remote-debugging-port`)
-   and poll until it answers — deterministic, no reliance on a flaky cold-start.
-2. **Open** the "Adi option swing 2.0" screener (`ui_click` the radar icon).
-3. **Scan** every constituent on the Daily (1D) interval, parsing *every* row of the
-   "Premium Trading Dashboard – Adi Radmy Edition" table (not just the entry row).
+1. **Read** `data/universe.csv` — every ticker in it, no live fetch, no sampling.
+2. **Scan** every ticker on the Daily (1D) interval: pull IBKR bars, run
+   `scripts/compute_signal.py` locally (RSI(20), MA50/MA150, volume, candle
+   pattern — a deterministic proxy for the entry signal).
+3. **Verify** R/R on the live IBKR option chain for PRIME-eligible names only.
 4. **Report** into two clearly separated tables:
-   - 🟢 **PRIME** — full `יש אישור כניסה` + strong structure that passes the MA-150 and
+   - 🟢 **PRIME** — `entry_confirmed: true` + strong structure that passes the MA-150 and
      1:1.5–2.5 R/R rules (the only execution-ready names).
    - 🟡 **RADAR** — "setups in the making" (strong structure / weak trigger) plus any
      discretionary "hidden gems" flagged from independent TA. Watch-only.
@@ -32,14 +40,18 @@ unnoticed.
 
 | File | Purpose |
 |---|---|
-| `daily-scan.sh` | Main wrapper: env, lock, skip logic, CDP pre-warm, headless Claude run, alerting |
+| `daily-scan.sh` | Main wrapper: env, lock, skip logic, headless Claude run, alerting |
 | `watchdog.sh` | Safety net — alerts if the day's report didn't complete |
+| `data/universe.csv` | Static candidate universe (ticker, sector, approx market cap) — replaces the live screener list |
+| `scripts/refresh_universe.py` | Regenerates `data/universe.csv` from the iShares Russell 1000 (IWB) holdings CSV, filtered to $10B–$5T approx market cap. Re-run every 1–3 months (see the script's docstring for why and how to update the calibration constant) |
+| `scripts/compute_signal.py` | Local entry-signal proxy (RSI/MA/volume/candle) computed from IBKR bars — replaces the TradingView dashboard read |
+| `scripts/signal_core.py` | Shared entry-rule logic between the live scanner and the backtest engine |
 | `prompts/bull-put-spread.md` | The scan prompt (rules, two-table output, settled-vs-provisional) |
 | `prompts/bull-put-spread-ror50.md` | On-demand IBKR-only strike selector: user-given tickers, dynamic spread widths, ROR≥50% gate, lowest-strike-that-clears rule |
 | `prompts/verify-rr-gate.md` | Ad-hoc wiring check for the IBKR R/R gate (1:1.5–2.5 band) |
 | `prompts/smoke-test.md` | Lightweight plumbing/auth check (one ticker) |
 | `us-market-holidays.txt` | NYSE full-day closures to skip (update yearly) |
-| `.env.example` | Template for `.env` (TradingView, GUI, Claude auth, Telegram) |
+| `.env.example` | Template for `.env` (GUI, Claude auth, Telegram) |
 | `priority-today.md` | *(gitignored)* optional date-gated daily priority overlay |
 | `logs/`, `state/` | *(gitignored)* runtime output + hashes |
 
@@ -74,12 +86,14 @@ Drop a `priority-today.md` with first line `PRIORITY_DATE: YYYY-MM-DD` and a lis
 tickers to surface them at the top of that day's report. It auto-expires (date-gated).
 
 ## Operational notes / gotchas
-- **Launch with CDP, never plain `tradingview`** — a non-CDP instance can't be driven by the bridge.
-- **Wayland env required** (`WAYLAND_DISPLAY`) for the Electron app to start under cron.
-- The run lock closes the TradingView fd (`9>&-`) so the app can't strand the lock.
 - The machine must be powered on at 19:00; cron can't wake a sleeping box (the watchdog flags it).
+- `data/universe.csv` goes stale slowly (market-cap band is wide, Russell 1000 only
+  reconstitutes semi-annually) — refresh every 1–3 months with
+  `python3 scripts/refresh_universe.py`, and update its `RUSSELL_1000_TOTAL_MKTCAP`
+  constant from FTSE Russell's latest published reconstitution figure first.
 
 ## Strategy rules (summary)
 Above MA-150; short put OTM **below** support; target R/R 1:2 (band 1:1.5–2.5);
-reject if strike intervals can't fit R/R with the short below support; deep-parse the
-dashboard; two-table PRIME/RADAR output; strict scope (screener constituents only).
+reject if strike intervals can't fit R/R with the short below support; check every
+`compute_signal.py` factor, not just the aggregate; two-table PRIME/RADAR output;
+strict scope (`data/universe.csv` constituents only).
