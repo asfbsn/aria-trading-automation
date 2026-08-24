@@ -56,8 +56,25 @@ CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-4-8}"
 # single successful comparison run in 5+ weeks (TradingView kept crashing
 # under cron), so there was nothing to validate against; compute_signal.py is
 # now the sole signal source.
+#
+# Edit(.../state/scratch/signal_input.json) exists ONLY so compute_signal.py
+# can be fed via `--input <path>` instead of a heredoc. Confirmed 2026-08-25:
+# a Bash command whose argument literally contains JSON (any `{`/`"` mix — a
+# heredoc body, an echo pipe, anything) is auto-denied by Claude Code's own
+# command-safety heuristic as "expansion obfuscation" — this is NOT the
+# allowedTools gate, it can't be worked around by editing this list, and it
+# silently ate every ticker on every run for as long as the prompt asked for
+# a heredoc (the run just sits with zero output until CLAUDE_TIMEOUT kills
+# it). The file gets overwritten once per ticker; scoped to one exact path,
+# not a directory glob, so nothing else can be written under $ARIA_HOME.
+# NOTE: the grant is `Edit(path)`, not `Write(path)` — confirmed directly from
+# Claude Code's own permission-check error: "Write(path) is not matched by
+# file permission checks — only Edit(path) rules are ... Edit rules cover all
+# file-editing tools." The model still calls the Write tool; the allow-rule
+# just has a different name than the tool it covers.
 CLAUDE_ALLOWED_TOOLS_BASE="\
 Read(/${ARIA_HOME}/data/universe.csv),\
+Edit(/${ARIA_HOME}/state/scratch/signal_input.json),\
 mcp__claude_ai_Interactive_Brokers_IBKR__search_contracts,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_option_parameters,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_option_data,\
@@ -106,7 +123,7 @@ send_telegram() {
   fi
 }
 
-mkdir -p "$LOG_DIR" "$STATE_DIR"
+mkdir -p "$LOG_DIR" "$STATE_DIR" "$STATE_DIR/scratch"
 
 TODAY="$(date +%F)"
 RUN_TS="$(date '+%Y-%m-%d %H:%M:%S %Z')"

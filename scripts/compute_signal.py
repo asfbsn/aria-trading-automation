@@ -40,6 +40,14 @@ Flags:
     pass IBKR's response unmodified (index drift risk across 150+ values), and
     the allowed Bash scope has no separate transform command — so the drop
     has to happen inside this script.
+  --input <path>   Read the JSON payload from this file instead of stdin.
+    REQUIRED in the live daily-scan pipeline (confirmed 2026-08-25): a Bash
+    command whose argument literally contains JSON (any `{`/`"` combination —
+    a heredoc body or an echo/pipe) is auto-denied by Claude Code's own
+    command-safety heuristic as "expansion obfuscation", regardless of the
+    allowedTools prefix grant. There is no quoting fix — the payload has to
+    reach the script as a file argument instead, written first via a scoped
+    Write permission, never as literal text in the command line.
 """
 import json
 import sys
@@ -85,9 +93,15 @@ def bars_from_parallel_arrays(payload):
 
 
 def main():
-    exclude_last_bar = "--exclude-last-bar" in sys.argv[1:]
+    args = sys.argv[1:]
+    exclude_last_bar = "--exclude-last-bar" in args
 
-    payload = json.load(sys.stdin)
+    if "--input" in args:
+        input_path = args[args.index("--input") + 1]
+        with open(input_path) as f:
+            payload = json.load(f)
+    else:
+        payload = json.load(sys.stdin)
     ticker = payload["ticker"]
     bars = payload["bars"] if "bars" in payload else bars_from_parallel_arrays(payload)
 

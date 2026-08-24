@@ -46,22 +46,27 @@ months, not resized to fit a token budget).
   not a replica — treat its `entry_confirmed` the way you'd treat your own
   independent technical read.
 - For each ticker: call `get_price_history` (IBKR) for **at least 220 daily
-  bars** (MA150 needs 150+ bars of warmup; 220 gives margin) → feed its response
-  **directly, unmodified**, merged with a `"ticker"` key, to
-  `python3 $ARIA_HOME/scripts/compute_signal.py` → parse the JSON result.
+  bars** (MA150 needs 150+ bars of warmup; 220 gives margin) → merge its
+  response **directly, unmodified**, with a `"ticker"` key → write that JSON
+  with the **Write** tool to the exact path
+  `$ARIA_HOME/state/scratch/signal_input.json` (overwrite it every ticker,
+  this is the only path you're allowed to write) → run `python3
+  $ARIA_HOME/scripts/compute_signal.py --input $ARIA_HOME/state/scratch/signal_input.json
+  [--exclude-last-bar]` (Bash) → parse the JSON result from stdout.
   `compute_signal.py` accepts `get_price_history`'s native parallel-array shape
   (`{"ticker": "...", "time": [...], "open": [...], "high": [...], "low": [...],
   "close": [...], "volume": [...]}`) directly — do NOT hand-transform it into
   `{"bars": [{"date","open",...}, ...]}` yourself, and do NOT hand-truncate the
   last bar yourself either; both reshapes are error-prone by hand (index drift
-  across 150+ values) and the allowed Bash scope has no separate transform
-  command to do it safely. Use the `--exclude-last-bar` flag instead (see
-  TIMING below) — the script does the drop internally.
-  **Bash permission is scoped to this exact script prefix — invoke it directly
-  with a heredoc, not a leading pipe:**
-  `python3 $ARIA_HOME/scripts/compute_signal.py [--exclude-last-bar] <<'EOF'` / JSON / `EOF`
-  (a command starting with `echo ... |` or similar will NOT match the allowed
-  prefix and will be blocked).
+  across 150+ values). Use the `--exclude-last-bar` flag instead (see TIMING
+  below) — the script does the drop internally.
+  **DO NOT pass the JSON as a heredoc or an `echo ... |` pipe into Bash — ever.**
+  A Bash command whose argument literally contains JSON (any `{`/`"` together)
+  gets silently auto-denied by Claude Code's own command-safety heuristic as
+  "expansion obfuscation" — not the allowedTools gate, no quoting fixes it —
+  and the run will sit with zero output until the wrapper's timeout kills it
+  (confirmed 2026-08-25, this was the actual cause of every prior scan hang).
+  The Write-file-then-`--input`-flag path above is the only safe route.
 - **Earnings proximity is not automated** (no data source wired for it). If you
   already know a name's earnings date, factor it in; otherwise mark "earnings:
   unknown" and do not gate PRIME on it — flag for manual check instead.
@@ -71,13 +76,13 @@ This runs at 19:00 Israel ≈ **12:00 ET, mid US session**, so today's daily can
 is **unsettled and can still flip**. `get_price_history`'s last bar may be
 today's live/in-progress session. Structure the report in two clearly separated
 sections, and run `compute_signal.py` **twice** per ticker on the SAME
-`get_price_history` response (don't re-fetch):
-1. **SETTLED (authoritative)** — `python3 $ARIA_HOME/scripts/compute_signal.py
-   --exclude-last-bar` (drops today's in-progress bar internally; output has
-   `"settled": true`). This drives every PRIME/RADAR/REJECT decision below.
-2. **PROVISIONAL (today, unsettled)** — `python3
-   $ARIA_HOME/scripts/compute_signal.py` (no flag, full bars including today;
-   output has `"settled": false`). Label it explicitly as subject to change
+`get_price_history` response written once to `signal_input.json` (don't
+re-fetch or rewrite the file):
+1. **SETTLED (authoritative)** — add `--exclude-last-bar` (drops today's
+   in-progress bar internally; output has `"settled": true`). This drives
+   every PRIME/RADAR/REJECT decision below.
+2. **PROVISIONAL (today, unsettled)** — no flag, full bars including today;
+   output has `"settled": false`. Label it explicitly as subject to change
    before the US close. Do NOT issue entries off the provisional read alone.
 
 ## Selection rules (my mentor's risk management)
