@@ -20,6 +20,12 @@ logic here; change signal_core.py so live and backtest stay in lockstep.
 Input (stdin): JSON {"ticker": str, "bars": [{"date","open","high","low","close","volume"}, ...]}
   bars must be ascending by date. Needs >=155 bars for a stable MA150 read.
 
+  Also accepts IBKR get_price_history's native shape directly (no manual
+  reshape needed) -- pass its response merged with a "ticker" key, e.g.
+  {"ticker": "GOOGL", "time": [...], "open": [...], "high": [...],
+  "low": [...], "close": [...], "volume": [...]}. Parallel arrays are
+  zipped into the same bar-dict list internally.
+
 Output (stdout): JSON with computed indicators + per-factor checks +
   an aggregate "entry_confirmed" boolean (proxy for "יש אישור כניסה").
 """
@@ -37,10 +43,39 @@ from signal_core import (
 RSI_LENGTH = 20
 
 
+def bars_from_parallel_arrays(payload):
+    """Zip IBKR get_price_history's parallel-array response into the
+    bar-dict list the rest of this script expects."""
+    times = payload["time"]
+    opens = payload["open"]
+    highs = payload["high"]
+    lows = payload["low"]
+    closes = payload["close"]
+    volumes = payload["volume"]
+    n = len(times)
+    if not (len(opens) == len(highs) == len(lows) == len(closes) == len(volumes) == n):
+        raise ValueError(
+            f"IBKR parallel arrays have mismatched lengths: "
+            f"time={n} open={len(opens)} high={len(highs)} "
+            f"low={len(lows)} close={len(closes)} volume={len(volumes)}"
+        )
+    return [
+        {
+            "date": times[i],
+            "open": opens[i],
+            "high": highs[i],
+            "low": lows[i],
+            "close": closes[i],
+            "volume": volumes[i],
+        }
+        for i in range(n)
+    ]
+
+
 def main():
     payload = json.load(sys.stdin)
     ticker = payload["ticker"]
-    bars = payload["bars"]
+    bars = payload["bars"] if "bars" in payload else bars_from_parallel_arrays(payload)
 
     if len(bars) < MIN_BARS:
         print(json.dumps({

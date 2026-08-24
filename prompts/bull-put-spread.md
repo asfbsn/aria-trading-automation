@@ -1,6 +1,6 @@
 You are running my automated daily Bull Put Spread scan. Use ONLY the connected
-tradingview-bridge MCP tools against my LOCAL TradingView Desktop. Apply my saved
-trading profile exactly (see memory: trading-bull-put-spread-profile).
+tradingview-bridge MCP tools against my LOCAL TradingView Desktop. Apply the
+trading profile below exactly.
 
 ## Readiness (do this first, in order)
 1. Call tv_health_check. If not connected, call tv_launch — it starts TradingView
@@ -10,17 +10,27 @@ trading profile exactly (see memory: trading-bull-put-spread-profile).
 2. Activate the screener: click the right-sidebar "Screeners" radar icon via
    ui_click by data-name "screener-dialog-button" (fallback: aria-label
    "Screeners"). Then confirm the active preset is **"Adi option swing 2.0"**
-   (read it via ui_evaluate); if a different preset shows, switch to it. The
-   screener DOM must be visible before you read its constituents.
+   by reading `document.querySelector('[data-name="screener-topbar-screen-title"]').textContent`
+   via ui_evaluate — this is the one reliable selector for the preset name;
+   don't guess at other class-based selectors (titleWrap/filterSet/etc. match
+   unrelated chart UI and waste tool calls). If a different preset shows,
+   switch to it. The screener DOM must be visible before you read its
+   constituents.
 
 ## Scope
 - Target the TradingView Stock Screener component named **"Adi option swing 2.0"**
   (read its constituents via ui_evaluate on the screener DOM). NEVER use a watchlist.
 - **Daily (1D) interval only.**
-- **TOKEN ECONOMY & STRICT SCOPE:** scan ONLY the ~36 screener constituents. Do NOT
-  open other watchlists, do NOT search for external symbols, avoid unnecessary
-  deep-dives or tool loops. One efficient pass per ticker; pull option chains only
-  for PRIME names. Then write the report and exit cleanly to conserve tokens.
+- **TOKEN ECONOMY & STRICT SCOPE:** scan ONLY the live screener constituents —
+  whatever count it actually returns today (this has ranged ~36–100+; the
+  screener's own filter surfaces more or fewer names as market conditions
+  change, that's not an anomaly). Do NOT open other watchlists, do NOT search
+  for external symbols, avoid unnecessary deep-dives or tool loops. One
+  efficient pass per ticker; pull option chains only for PRIME names. If the
+  live count is large (~60+), it's fine to scan the full list rather than a
+  bounded subset — token cost is per-ticker, not fixed, so budget by counting
+  what's actually there before deciding to sample. Then write the report and
+  exit cleanly to conserve tokens.
 - **Entry signal has a new local-compute proxy, run alongside the old chart
   read during the comparison trial below** (see TRIAL section). The
   "Premium Trading Dashboard - Adi Radmy Edition" Pine indicator is a
@@ -32,11 +42,16 @@ trading profile exactly (see memory: trading-bull-put-spread-profile).
   technical read, same trust level as the "hidden gem" override in rule 6, not
   as "the dashboard said so."
 - For each constituent: call `get_price_history` (IBKR) for **at least 220 daily
-  bars** (MA150 needs 150+ bars of warmup; 220 gives margin) → feed the bars as
-  `{"ticker": "...", "bars": [{"date","open","high","low","close","volume"}, ...]}`
-  (ascending by date) to `python3 $ARIA_HOME/scripts/compute_signal.py` → parse
-  the JSON result. **Bash permission is scoped to this exact script prefix —
-  invoke it directly with a heredoc, not a leading pipe:**
+  bars** (MA150 needs 150+ bars of warmup; 220 gives margin) → feed its response
+  **directly, unmodified**, merged with a `"ticker"` key, to
+  `python3 $ARIA_HOME/scripts/compute_signal.py` → parse the JSON result.
+  `compute_signal.py` accepts `get_price_history`'s native parallel-array shape
+  (`{"ticker": "...", "time": [...], "open": [...], "high": [...], "low": [...],
+  "close": [...], "volume": [...]}`) directly — do NOT hand-transform it into
+  `{"bars": [{"date","open",...}, ...]}` yourself; that reshape is done
+  internally and by hand it's error-prone (index drift across 150+ values).
+  **Bash permission is scoped to this exact script prefix — invoke it directly
+  with a heredoc, not a leading pipe:**
   `python3 $ARIA_HOME/scripts/compute_signal.py <<'EOF'` / JSON / `EOF`
   (a command starting with `echo ... |` or similar will NOT match the allowed
   prefix and will be blocked).
