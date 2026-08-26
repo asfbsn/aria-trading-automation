@@ -11,20 +11,22 @@
 3. **The nightly cron scan stays advisory/read-only.** Broker/order tools are never wired into the unattended job.
 4. **One ticket at a time, explicit per-ticket confirmation.** No batch/auto staging.
 5. **Respect the saved strategy** ([[trading-bull-put-spread-profile]]): stock above MA‑150, short put **below** support, R/R **1:1.5–2.5**, Daily-only, ~30 DTE.
-6. **Size discipline.** Verify buying power/margin (`get_account_summary`) and a pre-agreed max risk per trade before staging.
+6. **Size discipline (set 2026-08-26).** Max loss per spread = **6.25% of current net liquidation value** (`get_account_summary`); contracts = floor(6.25% × net_liq / ((width − credit) × 100)); a result of 0 means the spread is too wide for the account — do not stage. **Max 8 concurrent spreads** (≈50% total portfolio risk) and **one spread per sector** (sector from `data/universe.csv`). The nightly scan's TRADE DIRECTIVE block computes all of this — a staged ticket should match its numbers or state why it deviates.
+7. **Exits staged with the entry.** Default: GTC buy-to-close at **20% of received credit** (80% capture) placed right after the fill; mental/alert stop on a close below the short strike or MA-150; hard time stop at DTE ≤ 7. `exit-guard.sh` monitors the same thresholds daily.
 
 ---
 
 ## Step 1 — Review the nightly advisory scan & select a setup
 - Open the dated log: `~/aria-trading/logs/YYYY-MM-DD_bull-put-spread.md` (or ask me to summarize it).
 - Choose **one** setup whose **SETTLED** (prior-close) signal you trust — not the provisional mid-session bar.
+- Prefer a name whose **📋 Trade Directive block says EXECUTE NOW** (provisional bar confirming at support with volume) and is not BLOCKED (position cap / sector / zero-contract). A HOLD directive means wait for the next scan; a research-gate RADAR downgrade means the technicals passed but the fundamentals flagged — read the flag before overriding it.
 
 ## Step 2 — You explicitly request a ticket
 - Tell me, e.g.: *"Stage a Bull Put Spread on APD, short 270 / long 260, July 17 expiry."*
 - Required: **ticker, short strike, long strike, expiration.** If any is missing, I'll ask — I will **not** stage anything without an explicit request from you.
 
 ## Step 3 — I confirm size + price, then build the LIMIT instructions
-1. **I ask you first** for: **quantity** (number of spreads) and your **net-credit limit** (target ≥ 1:2 R/R per the profile). I never assume size.
+1. **I confirm size + price against the directive:** quantity from the 6.25% net-liq formula (golden rule 6) and net-credit limit from the directive's verified mid (floor: width/3.5, the 1:2.5 boundary). If you want to deviate from the directive's numbers, say so explicitly — I never silently substitute my own.
 2. I re-verify the setup: above MA‑150, short strike below support, R/R within 1:1.5–2.5, sufficient buying power (`get_account_summary`), no earnings in the window.
 3. Resolve contracts: `search_contracts` → `get_option_parameters` (pick the ~30 DTE expiry) → `get_option_data` (get the `put_contract_id` for **both** strikes).
 4. Stage with `create_order_instruction`, **LIMIT only**:

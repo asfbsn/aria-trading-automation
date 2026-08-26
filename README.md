@@ -18,19 +18,46 @@ dependency in the automated path.
 > deliberately excluded from its allow-list. Live IBKR orders are always *staged*
 > for manual review/submit by a human (see `ibkr-live-workflow.md`).
 
-## What it does (each weekday 19:00 Israel)
+## What it does (each weekday 19:00 Israel — enforced 19:00–20:00 execution window)
 
-1. **Read** `data/universe.csv` — every ticker in it, no live fetch, no sampling.
-2. **Scan** every ticker on the Daily (1D) interval: pull IBKR bars, run
+1. **Prescreen locally** (`scripts/prescreen.py`, yfinance, zero Claude/IBKR usage):
+   cuts the ~654-ticker universe to a shortlist (~130–140 live-tested) using
+   deliberately widened MA-band rules. Over-inclusive by design — a name yfinance
+   can't evaluate passes through rather than being dropped; only a confirmed band
+   failure filters a name before the authoritative IBKR stage. ~80% token saving.
+2. **Scan** every shortlisted ticker on the Daily (1D) interval: pull IBKR bars, run
    `scripts/compute_signal.py` locally (RSI(20), MA50/MA150, volume, candle
-   pattern — a deterministic proxy for the entry signal).
+   pattern — a deterministic proxy for the entry signal). IBKR + compute_signal.py
+   remain the sole authoritative signal; prescreen values are reference only.
 3. **Verify** R/R on the live IBKR option chain for PRIME-eligible names only.
-4. **Report** into two clearly separated tables:
-   - 🟢 **PRIME** — `entry_confirmed: true` + strong structure that passes the MA-150 and
-     1:1.5–2.5 R/R rules (the only execution-ready names).
-   - 🟡 **RADAR** — "setups in the making" (strong structure / weak trigger) plus any
+4. **Research-gate** each surviving PRIME name (WebSearch/WebFetch): earnings
+   timing vs expiry, analyst sentiment, news catalysts, SEC filings. A red flag on
+   the first three downgrades to RADAR; a material SEC finding (incl. a Form 4
+   insider-selling cluster: 3+ distinct insiders in a 30-day window over 90 days)
+   hard-rejects. One scan-start macro check (VIX / SPY-vs-MA150 / scheduled events)
+   heads the report as Market Context.
+5. **Emit a trade directive** per final PRIME name: exact strikes/expiry, entry
+   limit credit + minimum (1:2.5 floor), EXECUTE-NOW-vs-HOLD trigger from the
+   provisional bar (must confirm at support with volume), position size at
+   6.25% of net-liq max loss (0 contracts ⇒ BLOCKED), 8-position cap + sector
+   diversification guards on validated leg pairs, and mandatory exits: GTC
+   buy-to-close at 20% of credit (80% capture), stop below short strike/MA150,
+   DTE≤7 time stop. Advisory only — a human places every order.
+6. **Report** into two clearly separated tables:
+   - 🟢 **PRIME** — `entry_confirmed: true` + strong structure + verified
+     1:1.5–2.5 R/R + clean research gate (the only execution-ready names).
+   - 🟡 **RADAR** — "setups in the making", research-gate downgrades, plus any
      discretionary "hidden gems" flagged from independent TA. Watch-only.
-5. **Deliver** a dated log + desktop `notify-send` + Telegram (report inline + attached).
+7. **Deliver** a dated log + desktop `notify-send` + Telegram (report inline + attached).
+
+Two companion guards (separate schedules/locks, both read-only, Telegram-delivered):
+- **`gtc-guard.sh`** — pre-open listing of EVERY live order on the account
+  (added after a forgotten GTC close order gap-filled at the 2026-08-25 open).
+  Delivery failure fails the run loudly; long lists warn on truncation.
+- **`exit-guard.sh`** — monitors open bull-put-spread positions (validated leg
+  pairs only) via `scripts/compute_exit_signal.py`: CLOSE on thesis invalidation
+  (close below short strike or MA150), ≥80% profit captured, or DTE≤7; WATCH on
+  RSI>70 / bearish reversal candle; HOLD otherwise.
 
 A **watchdog** (`watchdog.sh`, pure bash+curl, no Claude usage) runs at 19:45 and
 Telegram-alerts if a complete report wasn't produced — so a silent miss never goes
@@ -40,9 +67,13 @@ unnoticed.
 
 | File | Purpose |
 |---|---|
-| `daily-scan.sh` | Main wrapper: env, lock, skip logic, headless Claude run, alerting |
+| `daily-scan.sh` | Main wrapper: env, lock, skip logic + 19:00–20:00 window check, local prescreen, headless Claude run, shortlist-membership validation, alerting |
+| `gtc-guard.sh` | Pre-open safety check: Telegram-lists every live order for human review (prompt: `prompts/gtc-order-guard.md`) |
+| `exit-guard.sh` | Open-position exit monitor: CLOSE/WATCH/HOLD verdicts per spread (prompt: `prompts/bull-put-spread-exit.md`) |
 | `watchdog.sh` | Safety net — alerts if the day's report didn't complete |
 | `data/universe.csv` | Static candidate universe (ticker, sector, approx market cap) — replaces the live screener list |
+| `scripts/prescreen.py` | Local yfinance prescreen: universe → shortlist JSON (`state/scratch/prescreen_<date>.json`), over-inclusive, pass-through on data failures |
+| `scripts/compute_exit_signal.py` | Exit-signal computation for open positions (thesis invalidation vs short strike / MA150) |
 | `scripts/refresh_universe.py` | Regenerates `data/universe.csv` from the iShares Russell 1000 (IWB) holdings CSV, filtered to $10B–$5T approx market cap. Re-run every 1–3 months (see the script's docstring for why and how to update the calibration constant) |
 | `scripts/compute_signal.py` | Local entry-signal proxy (RSI/MA/volume/candle) computed from IBKR bars — replaces the TradingView dashboard read |
 | `scripts/signal_core.py` | Shared entry + exit rule logic between the live scanner and the backtest engine |
@@ -97,9 +128,36 @@ tickers to surface them at the top of that day's report. It auto-expires (date-g
   reconstitutes semi-annually) — refresh every 1–3 months with
   `python3 scripts/refresh_universe.py`, and update its `RUSSELL_1000_TOTAL_MKTCAP`
   constant from FTSE Russell's latest published reconstitution figure first.
+- **Known open issue (2026-08-26): headless cron runs still don't see the IBKR
+  connector** — every cron log 08-11 → 08-25 is an abort or empty header, while
+  interactive sessions attach IBKR fine. Until root-caused, run scans from an
+  interactive session (`FORCE_RUN=true ./daily-scan.sh`). The auth note below fixed
+  one cause (exported tokens); something in the cron environment still breaks
+  connector attach.
+- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` are not in `.env`/`.env.example` — all
+  four scripts treat Telegram as optional and silently skip when unset. Set them
+  (in `.env` or the cron environment) or delivery is desktop-notify only.
+- Universe symbol hygiene: yfinance chokes on a few rows (`BRKB` needs `BRK-B`
+  format; `XTSLA` is a cash fund; `HEIA`, `FDXF`, `HONA`, `SPCX`, `SUNB` also fail).
+  Harmless — the prescreen passes them through to IBKR — but worth cleaning on the
+  next `refresh_universe.py` pass.
+- The execution window check skips any run whose local start hour isn't 19:xx
+  (`FORCE_RUN=true` bypasses). Israel/US DST transitions don't coincide, so ~2–3
+  weeks/year the window is 13:00 ET rather than 12:00 — defined in LOCAL time on
+  purpose.
 
 ## Strategy rules (summary)
 Above MA-150; short put OTM **below** support; target R/R 1:2 (band 1:1.5–2.5);
 reject if strike intervals can't fit R/R with the short below support; check every
-`compute_signal.py` factor, not just the aggregate; two-table PRIME/RADAR output;
-strict scope (`data/universe.csv` constituents only).
+`compute_signal.py` factor, not just the aggregate; research gate on PRIME names
+(earnings/analyst/news downgrade to RADAR, material SEC finding hard-rejects);
+two-table PRIME/RADAR output plus per-PRIME trade directives; strict scope
+(`data/universe.csv` constituents only, prescreen-shortlisted).
+
+**Position & exit rules (set 2026-08-26):** max loss per spread = **6.25% of net
+liquidation value** (contracts = floor(6.25% × net_liq / (width−credit) × 100); 0
+⇒ BLOCKED, never a 0-contract order); **max 8 concurrent spreads** (≈50% total
+portfolio risk) with **strict sector diversification** (one spread per sector);
+default exit = **GTC buy-to-close at 20% of received credit (80% capture)**, plus
+stop on a close below the short strike or MA150 and a DTE≤7 time stop — the same
+thresholds `exit-guard.sh` monitors.
