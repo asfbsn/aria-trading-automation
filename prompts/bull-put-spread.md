@@ -150,12 +150,16 @@ In Phase A, rules are evaluated against prescreen's local data. In Phase B,
 output from IBKR bars — that's the authoritative signal source for finalists.
 1. Stock MUST trade ABOVE its MA-150 (`checks.above_ma150` — below = falling
    knife → reject).
-2. Short Put MUST be OTM, placed BELOW the MA-150 or recent daily swing lows.
-   Never sell ATM or above support to force a trade.
+2. Short Put MUST be OTM, chosen via tiered search (deepest-safest first):
+   primary target is below MA-150 or swing low with clearance; if R/R 1:1.5–2.5
+   cannot be met, short strike may flex up to sit AT MA-150 or basing support,
+   but NEVER above MA-150. Stop at first (deepest) passing strike. (See
+   R/R VERIFICATION for full tiered mechanics).
 3. R/R target 1:2 (~1/3 of width as credit). Acceptable band **1:1.5 → 1:2.5**.
    On a $10-wide: credit $4.00 (1:1.5) … $2.86 (1:2.5). Reject worse than 1:2.5.
-4. Strike-interval aware: if wide gaps (e.g. APD's $10) make it impossible to
-   get 1:2 while keeping the short BELOW support, REJECT — do not force.
+4. Strike-interval aware: if wide gaps (e.g. APD's $10) prevent hitting 1:1.5–2.5
+   at primary depth, step up through the flexibility tier (up to MA-150). REJECT
+   only if no available interval width at any tier clears the 1:1.5–2.5 band.
 5. Read every check in `checks` object, not just `entry_confirmed`:
    `above_ma150`, `rsi_below_50`, `rsi_rising`, `near_ma50_pullback`,
    `near_ma150_support`, `volume_above_avg`, `bullish_candle` (+ `candle_pattern`
@@ -182,17 +186,19 @@ tools:
 3. `get_option_data` (bound strikes around support) → `put_contract_id`s at/below the MA-150 & swing low.
 4. `get_price_snapshot` on the candidate short & long puts → bid/ask → use mids.
 5. Compute: **credit = short_mid − long_mid**; **max loss = width − credit**; **R/R = maxloss : credit**.
-   PRIME requires BOTH: (a) short strike **BELOW support** (MA-150 or swing low), AND
-   (b) **R/R within 1:1.5–2.5** (credit ≈ width/3.5 … width/2.5).
-- If no strike/width combo satisfies BOTH → the name is a **REJECT**, reason
-  "R/R gate: can't hit 1:1.5–2.5 with short below support" (the APD/AMZN case) — do
-  NOT list it as PRIME and do NOT bend "short below support" to force the band.
+   Apply the **tiered strike search (deepest-safest first)**:
+   - **Tier 1 (Primary target):** Short strike placed a few percentage points below MA-150, OR below the recent local swing low (lowest wicks of recent daily candles) — whichever gives more room. Test if R/R hits **1:1.5–2.5** (credit ≈ width/3.5 … width/2.5).
+   - **Tier 2 (Flexibility tier):** If Tier 1 cannot hit R/R 1.5–2.5 at available strike intervals, walk the short strike up — as far as sitting AT the MA-150 line itself, or the lower edge of a genuine multi-day consolidation/basing zone — but **NEVER above MA-150** (absolute hard ceiling).
+   - **Selection rule:** Walk the strike up from the primary target only as far as strictly necessary to clear 1.5–2.5, and stop at the first (deepest/safest) strike that clears the band. Do not pick a shallower strike if a deeper one works.
+- If no strike/width combo across either tier satisfies 1:1.5–2.5 (even with short at MA-150) → the name is a **REJECT**, reason
+  "R/R gate: cannot hit 1:1.5–2.5 even at MA-150 flexibility tier" (e.g. the APD/AMZN case where wide strike intervals prevent compliant credit even at the MA-150 ceiling) — do
+  NOT list it as PRIME and NEVER place short strike above MA-150.
 - For every PRIME row, report the **verified exact strikes, credit, max loss, max profit, and R/R**.
 - NEVER use order tools (`create_order_instruction`); read-only only.
 
 ## 🔎 QUALITATIVE RESEARCH GATE — PRIME-eligible only
 Runs ONLY on names that survive R/R VERIFICATION (passed technical rules 1,3,5 AND
-verified a compliant 1:1.5–2.5 spread with short below support — typically 0–3
+verified a compliant 1:1.5–2.5 spread via tiered strike search at/below MA-150 — typically 0–3
 names; token economy: do NOT search rejects/RADAR). For each such candidate, use
 `WebSearch` (and `WebFetch` for specific URLs worth opening, e.g. SEC filing index
 pages) to perform four checks:
@@ -245,7 +251,7 @@ For each name that survived ALL gates (technical rules + R/R verification + rese
 - **Macro context note:** if a major scheduled macro event (from the scan-start Market Context check) falls inside the ~30 DTE window, note it here for context (does not gate execution).
 - **EXITS (both mandatory in every executable block):**
   - Profit-take: place GTC buy-to-close at **20% of received credit** (captures 80% of max profit; state the $ price). Note: this 80%-capture target is the default baseline GTC order; exits remain dynamically manageable by the exit guard / discretion on momentum and market conditions.
-  - Stop: close if the underlying CLOSES below the short strike OR below its MA150 (identical thresholds to `prompts/bull-put-spread-exit.md`'s exit guard — the systems are deliberately symmetric).
+  - Stop: close if the underlying CLOSES below the short strike OR below its MA150 (identical thresholds to `prompts/bull-put-spread-exit.md`'s exit guard — the systems are deliberately symmetric; note: if short strike sits at MA150 from flexibility tier, stop triggers on MA150 breach close to entry, which is expected).
   - Time stop: close at DTE ≤ 7 regardless of P/L.
 
 Reminder: this is an advisory directive — the human places every order; NEVER use order tools.
@@ -258,8 +264,8 @@ unsettled) changes separately. Produce, in order:
 - **Market Context** (3–5 lines: VIX level, SPY vs its own MA150 trend, upcoming major macro events inside ~30 days).
 - **Table 1 — 🟢 PRIME CANDIDATES (ready for execution):** ONLY stocks with
   `entry_confirmed: true` + strong structure that pass the MA-150 rule, have a
-  **live-chain-verified** 1:1.5–2.5 spread with the short BELOW support (see
-  R/R VERIFICATION), AND clear the qualitative research gate (all checks clear or
+  **live-chain-verified** 1:1.5–2.5 spread via tiered strike search at/below MA-150
+  (see R/R VERIFICATION), AND clear the qualitative research gate (all checks clear or
   unknown/unavailable without red flags). A confirmed name with no compliant
   spread is a REJECT; any 🔴 research flag on checks 1–3 downgrades to RADAR, and
   check 4 (SEC) downgrades to REJECT. These alone are execution-ready.
@@ -270,11 +276,11 @@ unsettled) changes separately. Produce, in order:
 - **📋 Trade Directives:** per-PRIME execution plan blocks (see TRADE DIRECTIVE section above).
 - Columns:
   - **Table 1 (PRIME):** [Ticker] | [Daily Confirmation / why] | [MA-150 / Swing Low]
-    | [Suggested Structure: Short/Long, short BELOW support] | [Exact R/R & Credit,
+    | [Suggested Structure: Short/Long (short at/below MA-150)] | [Exact R/R & Credit,
     1:1.5–2.5] | [🔎 Research: status + one-line note] (e.g. "clear" or "earnings:
     unknown — verify manually").
   - **Table 2 (RADAR):** [Ticker] | [Daily Confirmation / why] | [MA-150 / Swing Low]
-    | [Suggested Structure: Short/Long, short BELOW support] | [Exact R/R & Credit,
+    | [Suggested Structure: Short/Long (short at/below MA-150)] | [Exact R/R & Credit,
     1:1.5–2.5]. List which checks are 🟢 vs 🔴 (+ override reason). Rows arriving
     via research-gate downgrade must state it explicitly (e.g. "Research-gate
     downgrade: ANALYST_RED_FLAG — Morgan Stanley downgrade to Underweight, 2026-08-20").
