@@ -1,4 +1,4 @@
-"""Shared ARIA bull-put-spread entry logic — single source of truth.
+"""Shared ARIA bull-put-spread entry and exit rules — single source of truth.
 
 Imported by both the live signal path (scripts/compute_signal.py, stdlib only)
 and the backtest signal engine (scripts/backtest/bps_signal_engine.py).
@@ -13,6 +13,10 @@ Rule (mirrors prompts/bull-put-spread.md):
      "within 2% of nearest MA" placeholder, which was an undisclosed-band guess)
   4. volume > 20-bar volume MA
   5. bullish candle (hammer or bullish engulfing)
+
+Exit rule:
+  - Thesis invalidation = close below short strike OR close below MA150 (hard)
+  - RSI > 70 / bearish candle (shooting star, bearish engulfing) = discretionary watch signals only
 """
 
 RSI_LENGTH = 20
@@ -22,6 +26,35 @@ MA50_BAND = (0.0, 0.10)   # close is 0%-10% BELOW MA50: (ma50-close)/ma50 in thi
 MA150_BAND = (0.0, 0.10)  # close is 0%-10% ABOVE MA150: (close-ma150)/ma150 in this range
 VOLUME_MA_LENGTH = 20
 MIN_BARS = 150 + 5
+
+
+def bars_from_parallel_arrays(payload):
+    """Zip IBKR get_price_history's parallel-array response into the
+    bar-dict list the rest of this script expects."""
+    times = payload["time"]
+    opens = payload["open"]
+    highs = payload["high"]
+    lows = payload["low"]
+    closes = payload["close"]
+    volumes = payload["volume"]
+    n = len(times)
+    if not (len(opens) == len(highs) == len(lows) == len(closes) == len(volumes) == n):
+        raise ValueError(
+            f"IBKR parallel arrays have mismatched lengths: "
+            f"time={n} open={len(opens)} high={len(highs)} "
+            f"low={len(lows)} close={len(closes)} volume={len(volumes)}"
+        )
+    return [
+        {
+            "date": times[i],
+            "open": opens[i],
+            "high": highs[i],
+            "low": lows[i],
+            "close": closes[i],
+            "volume": volumes[i],
+        }
+        for i in range(n)
+    ]
 
 
 def sma(values, length):
@@ -115,3 +148,54 @@ def entry_checks(closes, volumes, bars, rsis=None):
     confirmed = all(v for k, v in checks.items()
                     if k != "candle_pattern")
     return checks, confirmed
+
+
+def bearish_candle_pattern(o, h, l, c, prev_o, prev_c):
+    """Shooting star / bearish engulfing — mirrors candle_pattern()'s hammer/
+    bullish_engulfing logic but for the bearish case."""
+    body = abs(c - o)
+    rng = h - l
+    if rng <= 0:
+        return "none"
+    upper_wick = h - max(o, c)
+    lower_wick = min(o, c) - l
+    if upper_wick >= 2 * body and lower_wick <= body and body > 0:
+        return "shooting_star"
+    if prev_o is not None and prev_c is not None:
+        if prev_c > prev_o and c < o and o >= prev_c and c <= prev_o:
+            return "bearish_engulfing"
+    return "none"
+
+
+def exit_checks(closes, bars, short_strike, rsis=None):
+    """Evaluate whether an OPEN short-put-spread position's underlying thesis
+    is still intact. Purely technical (stock-level) — does NOT know about
+    credit received or current option pricing; that's computed separately by
+    the caller from live option quotes.
+
+    Returns (checks dict, thesis_invalidated bool).
+    """
+    if rsis is None:
+        rsis = rsi_series(closes)
+    rsi_now = rsis[-1]
+    ma150 = sma(closes, 150)
+    close = closes[-1]
+
+    checks = {
+        "short_strike_breached": short_strike is not None and close < short_strike,
+        "broke_ma150_support": ma150 is not None and close < ma150,
+        "rsi_overbought": rsi_now is not None and rsi_now > 70.0,
+    }
+    pattern = bearish_candle_pattern(
+        bars[-1]["open"], bars[-1]["high"], bars[-1]["low"], bars[-1]["close"],
+        bars[-2]["open"] if len(bars) >= 2 else None,
+        bars[-2]["close"] if len(bars) >= 2 else None,
+    )
+    checks["bearish_candle"] = pattern != "none"
+    checks["candle_pattern"] = pattern
+
+    # Thesis invalidated = either hard technical break. RSI/candle are
+    # discretionary WATCH signals only, never force a close on their own.
+    thesis_invalidated = checks["short_strike_breached"] or checks["broke_ma150_support"]
+    return checks, thesis_invalidated
+

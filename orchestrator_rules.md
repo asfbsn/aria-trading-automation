@@ -41,6 +41,10 @@ Rules that go with the table:
 - **Never fix delegated code yourself** (beyond a T0-sized touch-up) — send corrections back through `run_agent.sh`.
 - Budget awareness: T1 is free, so prefer it whenever a task can be *made* fully specified by writing a tighter prompt. Spending your own effort sharpening a prompt is cheaper than spending a T3 run.
 
+## Gemini Research Delegation
+
+Interactive trading-analysis sessions delegate broad research (macro dossiers, sentiment sweeps, multi-source fundamental reads) to `./run_agent.sh --backend agy --model gemini-3.6-flash-high` as T1/T2 research tasks. The orchestrator verifies delegated findings against primary sources before they enter any trade directive. Every research prompt must state the agent is NOT to create/edit files (`agy` runs permission-less). NEVER spawn `run_agent.sh` from a headless cron prompt (nested-delegation guard + permission model both forbid it).
+
 # Execution Workflow
 
 1. **Analyze:** Understand the user's requirement.

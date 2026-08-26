@@ -57,29 +57,49 @@ CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-4-8}"
 # under cron), so there was nothing to validate against; compute_signal.py is
 # now the sole signal source.
 #
-# Edit(.../state/scratch/signal_input.json) exists ONLY so compute_signal.py
-# can be fed via `--input <path>` instead of a heredoc. Confirmed 2026-08-25:
-# a Bash command whose argument literally contains JSON (any `{`/`"` mix — a
-# heredoc body, an echo pipe, anything) is auto-denied by Claude Code's own
+# Edit(.../state/scratch/signal_input_*.json) exists ONLY so compute_signal.py can be fed
+# via `--input <path>` instead of a heredoc. Confirmed 2026-08-25: a Bash
+# command whose argument literally contains JSON (any `{`/`"` mix — a heredoc
+# body, an echo pipe, anything) is auto-denied by Claude Code's own
 # command-safety heuristic as "expansion obfuscation" — this is NOT the
 # allowedTools gate, it can't be worked around by editing this list, and it
 # silently ate every ticker on every run for as long as the prompt asked for
 # a heredoc (the run just sits with zero output until CLAUDE_TIMEOUT kills
-# it). The file gets overwritten once per ticker; scoped to one exact path,
-# not a directory glob, so nothing else can be written under $ARIA_HOME.
+# it).
 # NOTE: the grant is `Edit(path)`, not `Write(path)` — confirmed directly from
 # Claude Code's own permission-check error: "Write(path) is not matched by
 # file permission checks — only Edit(path) rules are ... Edit rules cover all
 # file-editing tools." The model still calls the Write tool; the allow-rule
 # just has a different name than the tool it covers.
+# Widened to a *.json glob (2026-08-25, was a single exact-path file): the
+# original per-ticker sequential loop reused ONE file, which is fine one at a
+# time but can't be parallelized — concurrent writes to the same path race.
+# Batched scanning needs one file per ticker (signal_input_<TICKER>.json), so
+# many tickers' price-history writes + compute_signal.py reads can happen in
+# the same turn without clobbering each other. Still scoped to one
+# subdirectory only, nothing else under $ARIA_HOME is writable.
+#
+# WebSearch + WebFetch: qualitative research gate for names surviving R/R
+# verification (earnings timing, analyst sentiment, news catalysts, SEC filings;
+# 0–3 PRIME-eligible names per run). Read-only research only — no order-placement
+# capability added.
+#
+# get_account_summary + get_account_positions: read-only account data for
+# trade-directive sizing (6.25% net-liq rule) and portfolio guards (8-position cap,
+# sector diversification); still zero order-placement capability.
 CLAUDE_ALLOWED_TOOLS_BASE="\
 Read(/${ARIA_HOME}/data/universe.csv),\
-Edit(/${ARIA_HOME}/state/scratch/signal_input.json),\
+Read(/${ARIA_HOME}/state/scratch/prescreen_*.json),\
+Edit(/${ARIA_HOME}/state/scratch/signal_input_*.json),\
+WebSearch,\
+WebFetch,\
 mcp__claude_ai_Interactive_Brokers_IBKR__search_contracts,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_option_parameters,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_option_data,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_price_snapshot,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_price_history,\
+mcp__claude_ai_Interactive_Brokers_IBKR__get_account_summary,\
+mcp__claude_ai_Interactive_Brokers_IBKR__get_account_positions,\
 Bash(python3 ${ARIA_HOME}/scripts/compute_signal.py:*)"
 CLAUDE_ALLOWED_TOOLS="${CLAUDE_ALLOWED_TOOLS:-$CLAUDE_ALLOWED_TOOLS_BASE}"
 
@@ -141,11 +161,12 @@ if ! flock -n 9; then
 fi
 
 # ===========================================================================
-# 2. Skip logic — weekends (belt & braces) + US market holidays
+# 2. Skip logic — weekends (belt & braces) + US market holidays + execution window
 # ===========================================================================
 DOW="$(date +%u)"  # 1=Mon … 7=Sun
+HH="$(date +%H)"   # local hour (00-23)
 if [ "${FORCE_RUN:-false}" = "true" ]; then
-  echo "[$RUN_TS] FORCE_RUN=true — bypassing weekend/holiday skip (manual test)." >>"$ERR_FILE"
+  echo "[$RUN_TS] FORCE_RUN=true — bypassing weekend/holiday/window skip (manual test)." >>"$ERR_FILE"
 else
   if [ "$DOW" -ge 6 ]; then
     echo "[$RUN_TS] Weekend — US market closed. Skip." >>"$ERR_FILE"; exit 0
@@ -154,7 +175,35 @@ else
     echo "[$RUN_TS] $TODAY is a US market holiday. Skip." >>"$ERR_FILE"
     notify "ARIA scan skipped" "$TODAY — US market holiday"; exit 0
   fi
+  # Execution window: 19:00–20:00 system local (Israel). Israel/US DST transitions
+  # don't coincide, so ~2–3 weeks/year 19:00 IDT is 13:00 ET instead of 12:00 — the
+  # window is deliberately defined in LOCAL time per the user's instruction,
+  # keeping cron (19:00 local) and this check consistent year-round.
+  if [ "$HH" -ne 19 ]; then
+    echo "[$RUN_TS] Outside 19:00–20:00 local execution window (current hour: $HH). Skip." >>"$ERR_FILE"
+    exit 0
+  fi
 fi
+
+# ===========================================================================
+# 2.5. Local technical prescreen (token economy)
+#      Claude was ingesting 220-bar histories for ~654 universe tickers when
+#      ~550 fail basic MA support/pullback bands. The prescreen does that first
+#      cut locally for free via yfinance. It is deliberately over-inclusive;
+#      IBKR + compute_signal.py remain authoritative for every shortlisted name.
+# ===========================================================================
+PRESCREEN_FILE="$STATE_DIR/scratch/prescreen_${TODAY}.json"
+set +e
+timeout 10m python3 "$ARIA_HOME/scripts/prescreen.py" --output "$PRESCREEN_FILE" >>"$ERR_FILE" 2>&1
+PRESCREEN_EC=$?
+set -e
+if [ "$PRESCREEN_EC" -ne 0 ]; then
+  notify "ARIA scan FAILED" "prescreen failed — see stderr log"
+  send_telegram "🔴 ARIA scan FAILED / prescreen failed — ${TODAY}. Check $ERR_FILE."
+  echo "[$RUN_TS] FAILURE: prescreen exit code $PRESCREEN_EC" >>"$ERR_FILE"
+  exit 1
+fi
+SHORTLIST_COUNT="$(python3 -c "import json; print(len(json.load(open('$PRESCREEN_FILE'))['shortlist']))")"
 
 # ===========================================================================
 # 3. Headless Claude scan against data/universe.csv
@@ -224,25 +273,36 @@ fi
 # 5. Done — desktop notification
 # ===========================================================================
 # Success requires a clean exit AND a structured completion record proving
-# every universe ticker was actually processed — a loose text-headline check
+# every shortlisted ticker was actually processed — a loose text-headline check
 # (e.g. grepping for "PRIME|RADAR|REJECT") is bypassable: a clean run that
 # reports an IBKR error as a REJECT for every ticker, while still emitting
 # SCREENER_CONSTITUENTS, would pass a headline check without processing any
 # real signal, and the watchdog would never fire. So require:
 #   1. SIGNALS_COMPLETED + SIGNALS_FAILED both present and parse as integers
 #   2. SIGNALS_FAILED == 0            (any tool/data failure = hard fail)
-#   3. SIGNALS_COMPLETED == universe row count (data/universe.csv minus header)
+#   3. SIGNALS_COMPLETED == shortlist count (from prescreen JSON)
 set +e   # bulletproof the alert/exit path: never let a stray non-zero (notify-send
          # failing under cron, grep -c returning 1, etc.) trip set -e and skip the alert.
 trap - ERR
-UNIVERSE_COUNT="$(($(wc -l < "$CLAUDE_PROJECT_DIR/data/universe.csv") - 1))"
 SIGNALS_COMPLETED="$(grep -m1 '^SIGNALS_COMPLETED:' "$LOG_FILE" | grep -oE '[0-9]+' | head -1)"
 SIGNALS_FAILED="$(grep -m1 '^SIGNALS_FAILED:' "$LOG_FILE" | grep -oE '[0-9]+' | head -1)"
+# Membership check, not just cardinality: SCREENER_CONSTITUENTS must be exactly
+# the prescreen shortlist (sorted-list compare, so duplicates/substitutions fail
+# too) — a count-only check can't catch the prompt silently swapping tickers.
+CONSTITUENTS_MATCH="$(python3 -c "
+import json, re, sys
+log = open('$LOG_FILE').read()
+m = re.search(r'^SCREENER_CONSTITUENTS:(.*)\$', log, re.M)
+syms = sorted(s.strip() for s in m.group(1).split(',') if s.strip()) if m else None
+short = sorted(json.load(open('$PRESCREEN_FILE'))['shortlist'])
+print('yes' if syms == short else 'no')
+" 2>>"$ERR_FILE")"
 if [ "${CLAUDE_EC:-1}" = "0" ] \
   && grep -q '^SCREENER_CONSTITUENTS:' "$LOG_FILE" \
+  && [ "$CONSTITUENTS_MATCH" = "yes" ] \
   && [ -n "$SIGNALS_COMPLETED" ] && [ -n "$SIGNALS_FAILED" ] \
   && [ "$SIGNALS_FAILED" = "0" ] \
-  && [ "$SIGNALS_COMPLETED" = "$UNIVERSE_COUNT" ]; then
+  && [ "$SIGNALS_COMPLETED" = "$SHORTLIST_COUNT" ]; then
   notify "ARIA scan ready ✓" "$TODAY — log saved"
   # Put the ACTUAL report (headline + PRIME/RADAR tables) into the message body,
   # not a generic line — and still attach the full file. Trimmed to stay under
@@ -256,6 +316,6 @@ else
   notify "ARIA scan FAILED" "incomplete — see log"
   REASON="$(sed -n '3,6p' "$LOG_FILE" | head -c 800)"
   send_telegram "🔴 ARIA scan FAILED / incomplete — ${TODAY}. Reason: ${REASON:-unknown}. Full log attached." "$LOG_FILE"
-  echo "[$RUN_TS] FAILURE: claude_ec=${CLAUDE_EC:-?}, marker=$(grep -c '^SCREENER_CONSTITUENTS:' "$LOG_FILE" 2>/dev/null || echo 0), signals_completed=${SIGNALS_COMPLETED:-?}, signals_failed=${SIGNALS_FAILED:-?}, universe_count=${UNIVERSE_COUNT:-?}" >>"$ERR_FILE"
+  echo "[$RUN_TS] FAILURE: claude_ec=${CLAUDE_EC:-?}, marker=$(grep -c '^SCREENER_CONSTITUENTS:' "$LOG_FILE" 2>/dev/null || echo 0), constituents_match=${CONSTITUENTS_MATCH:-?}, signals_completed=${SIGNALS_COMPLETED:-?}, signals_failed=${SIGNALS_FAILED:-?}, shortlist_count=${SHORTLIST_COUNT:-?}" >>"$ERR_FILE"
   exit 1
 fi

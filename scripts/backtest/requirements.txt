@@ -2,3 +2,5 @@ pandas
 numpy
 scipy
 yfinance
+vectorbt
+openbb

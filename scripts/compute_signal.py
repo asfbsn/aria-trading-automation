@@ -55,41 +55,13 @@ import sys
 from signal_core import (
     MA_LENGTHS,
     MIN_BARS,
+    bars_from_parallel_arrays,
     entry_checks,
     rsi_series,
     sma,
 )
 
 RSI_LENGTH = 20
-
-
-def bars_from_parallel_arrays(payload):
-    """Zip IBKR get_price_history's parallel-array response into the
-    bar-dict list the rest of this script expects."""
-    times = payload["time"]
-    opens = payload["open"]
-    highs = payload["high"]
-    lows = payload["low"]
-    closes = payload["close"]
-    volumes = payload["volume"]
-    n = len(times)
-    if not (len(opens) == len(highs) == len(lows) == len(closes) == len(volumes) == n):
-        raise ValueError(
-            f"IBKR parallel arrays have mismatched lengths: "
-            f"time={n} open={len(opens)} high={len(highs)} "
-            f"low={len(lows)} close={len(closes)} volume={len(volumes)}"
-        )
-    return [
-        {
-            "date": times[i],
-            "open": opens[i],
-            "high": highs[i],
-            "low": lows[i],
-            "close": closes[i],
-            "volume": volumes[i],
-        }
-        for i in range(n)
-    ]
 
 
 def main():
@@ -139,10 +111,10 @@ def main():
         "close": closes[-1],
         "rsi20": round(rsi_now, 2) if rsi_now is not None else None,
         "rsi20_2bars_ago": round(rsi_prev2, 2) if rsi_prev2 is not None else None,
-        "ma50": round(ma50, 2) if ma50 else None,
-        "ma150": round(ma150, 2) if ma150 else None,
+        "ma50": round(ma50, 2) if ma50 is not None else None,
+        "ma150": round(ma150, 2) if ma150 is not None else None,
         "volume": volumes[-1],
-        "volume_ma20": round(vol_ma20, 2) if vol_ma20 else None,
+        "volume_ma20": round(vol_ma20, 2) if vol_ma20 is not None else None,
         "checks": checks,
         "entry_confirmed": entry_confirmed,
         "note": "proxy signal — not the actual protected Adi Radmy Pine output",

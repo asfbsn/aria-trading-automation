@@ -45,7 +45,7 @@ unnoticed.
 | `data/universe.csv` | Static candidate universe (ticker, sector, approx market cap) — replaces the live screener list |
 | `scripts/refresh_universe.py` | Regenerates `data/universe.csv` from the iShares Russell 1000 (IWB) holdings CSV, filtered to $10B–$5T approx market cap. Re-run every 1–3 months (see the script's docstring for why and how to update the calibration constant) |
 | `scripts/compute_signal.py` | Local entry-signal proxy (RSI/MA/volume/candle) computed from IBKR bars — replaces the TradingView dashboard read |
-| `scripts/signal_core.py` | Shared entry-rule logic between the live scanner and the backtest engine |
+| `scripts/signal_core.py` | Shared entry + exit rule logic between the live scanner and the backtest engine |
 | `prompts/bull-put-spread.md` | The scan prompt (rules, two-table output, settled-vs-provisional) |
 | `prompts/bull-put-spread-ror50.md` | On-demand IBKR-only strike selector: user-given tickers, dynamic spread widths, ROR≥50% gate, lowest-strike-that-clears rule |
 | `prompts/verify-rr-gate.md` | Ad-hoc wiring check for the IBKR R/R gate (1:1.5–2.5 band) |
