@@ -290,8 +290,15 @@ order, as the literal last thing you output:
 
 SCREENER_CONSTITUENTS: SYM1,SYM2,SYM3,...
 SIGNALS_COMPLETED: <count of tickers where either Phase A local classification or Phase B IBKR verification produced a classification (REJECT, RADAR, or PRIME)>
-SIGNALS_FAILED: <count of tickers you could NOT classify at all — a Phase B tool/data error, or a shortlisted ticker missing from prescreen's JSON entirely. This is NOT the same as "REJECT": a ticker you technically rejected in Phase A or Phase B still counts as COMPLETED, not FAILED>
-FINALISTS_VERIFIED: <count of finalist tickers where Phase B SUCCEEDED — got a real IBKR-derived checks object and a REJECT/RADAR/PRIME classification. A finalist where Phase B ERRORS (tool/data failure) does NOT count here — it counts toward SIGNALS_FAILED instead, same as any other classification failure, and that alone already fails the run>
+SIGNALS_FAILED: <count of tickers you could NOT reach ANY definitive answer for — a genuine tool exception, timeout, or empty/malformed response where you got nothing usable. A shortlisted ticker missing from prescreen's JSON entirely also counts here>
+FINALISTS_VERIFIED: <count of finalist tickers where Phase B reached a definitive, final answer — REJECT, RADAR, or PRIME. This INCLUDES `insufficient_data` (compute_signal.py ran and told you there weren't enough bars — that's a real, final REJECT reason, not a failure) and "no contract found" (search_contracts genuinely returned nothing — also a real, final REJECT reason). The litmus test: if you can write a REJECT reason for the ticker, it counts here, NOT in SIGNALS_FAILED>
+
+**Litmus test for SIGNALS_FAILED vs a REJECT (applies in both Phase A and Phase B):**
+if you have ANY definitive answer to report — including "insufficient data",
+"no contract found", "below MA-150", or any other concrete reason — that ticker
+is COMPLETED/VERIFIED with a REJECT classification, never FAILED. SIGNALS_FAILED
+is reserved ONLY for a ticker where a tool call itself broke (exception, timeout,
+garbage response) and you have nothing to write down at all.
 
 SCREENER_CONSTITUENTS = the shortlist tickers. SIGNALS_COMPLETED +
 SIGNALS_FAILED MUST equal the length of the prescreen shortlist (not the full
@@ -299,8 +306,9 @@ universe). Prescreen failures are accounted in the wrapper, not in these
 counters. If any shortlisted ticker failed, list which ones and why in the
 Rejects section — do NOT silently drop it from the count. SIGNALS_FAILED > 0
 means the run is treated as a failure by the wrapper script even if the report
-body looks complete — this is intentional: a real tool/data failure must never
-be reported as a clean run.
+body looks complete — this is intentional: a genuine tool-call breakage must
+never be reported as a clean run. `insufficient_data` and "no contract found"
+are NOT tool-call breakages — see the litmus test above.
 
 FINALISTS_VERIFIED must equal the count of (prescreen entry_confirmed==true tickers)
 + (prescreen failures count) — the wrapper validates this independently from the
