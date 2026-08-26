@@ -72,7 +72,7 @@ Two companion guards (separate schedules/locks, both read-only, Telegram-deliver
   pairs only) via `scripts/compute_exit_signal.py` across four verdict tiers:
   CLOSE (thesis broken, ≥80% profit captured, DTE≤7 not underwater),
   RECOMMEND EXIT (imminent earnings within 5% of strike, DTE≤7 underwater),
-  WATCH (RSI>70, bearish candle), or HOLD.
+  WATCH (RSI>70, bearish candle), or HOLD, with live premarket price freshness annotations.
 
 A **watchdog** (`watchdog.sh`, pure bash+curl, no Claude usage) runs at 19:45 and
 Telegram-alerts if a complete report wasn't produced — so a silent miss never goes
@@ -84,7 +84,7 @@ unnoticed.
 |---|---|
 | `daily-scan.sh` | Main wrapper: env, lock, skip logic + 19:00–20:00 window check, local prescreen, headless Claude run, shortlist-membership validation, alerting |
 | `gtc-guard.sh` | Pre-open safety check: Telegram-lists every live order for human review (prompt: `prompts/gtc-order-guard.md`) |
-| `exit-guard.sh` | Open-position exit monitor: CLOSE/RECOMMEND EXIT/WATCH/HOLD verdicts per spread (prompt: `prompts/bull-put-spread-exit.md`) |
+| `exit-guard.sh` | Open-position exit monitor: CLOSE/RECOMMEND EXIT/WATCH/HOLD verdicts per spread + live premarket price check (prompt: `prompts/bull-put-spread-exit.md`) |
 | `watchdog.sh` | Safety net — alerts if the day's report didn't complete |
 | `data/universe.csv` | Static candidate universe (ticker, sector, approx market cap) — replaces the live screener list |
 | `scripts/prescreen.py` | Local yfinance prescreen: universe → shortlist JSON (`state/scratch/prescreen_<date>.json`) with full `entry_checks()`; authoritative `entry_confirmed` for non-finalists, pass-through on data failures |
@@ -116,6 +116,9 @@ FORCE_RUN=true PROMPT_FILE="$PWD/prompts/bull-put-spread-ror50.md" ./daily-scan.
 # install the schedule:
 ( crontab -l 2>/dev/null; cat <<'CRON'
 CRON_TZ=Asia/Jerusalem
+# Pre-open guards (16:00 Israel / ~9:00 ET — 30m pre-open gives exit-guard live premarket prices to check & lands gtc-guard order review before 9:30 ET open):
+0  16 * * 1-5 $HOME/Projects/aria-trading/gtc-guard.sh  >> $HOME/Projects/aria-trading/logs/gtc-guard.log 2>&1
+0  16 * * 1-5 $HOME/Projects/aria-trading/exit-guard.sh >> $HOME/Projects/aria-trading/logs/exit-guard.log 2>&1
 0  19 * * 1-5 $HOME/Projects/aria-trading/daily-scan.sh >> $HOME/Projects/aria-trading/logs/cron.log 2>&1
 45 19 * * 1-5 $HOME/Projects/aria-trading/watchdog.sh   >> $HOME/Projects/aria-trading/logs/watchdog.log 2>&1
 CRON

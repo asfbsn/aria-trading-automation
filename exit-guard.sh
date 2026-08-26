@@ -28,7 +28,11 @@ CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$HOME/Projects/aria-trading}"
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-4-8}"
 
-# Read-only IBKR tools for positions, price history, and option snapshots
+# Read-only IBKR tools for positions, price history, and option snapshots.
+# search_contracts added 2026-08-27: get_price_history needs a resolved
+# contract_id first (same two-step dependency as daily-scan.sh's Phase B) -
+# missing here since the original build, never caught because this path
+# never ran until a real open position existed to test against.
 # + scoped write to scratch for JSON input + scoped compute_exit_signal.py Bash prefix.
 # We deliberately do NOT allow any order-placement/modification tools.
 # WebSearch: earnings-proximity check for the new RECOMMEND EXIT escalation layer
@@ -37,6 +41,7 @@ CLAUDE_ALLOWED_TOOLS_BASE="\
 Edit(/${ARIA_HOME}/state/scratch/signal_input_*.json),\
 WebSearch,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_account_positions,\
+mcp__claude_ai_Interactive_Brokers_IBKR__search_contracts,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_price_history,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_price_snapshot,\
 Bash(python3 ${ARIA_HOME}/scripts/compute_exit_signal.py:*)"

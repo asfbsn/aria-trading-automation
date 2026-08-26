@@ -36,7 +36,10 @@ connected."
    a failure).
 
 2. **Compute technical exit signal:** For each open position pair:
-   - Call `get_price_history` on the underlying symbol (at least 155 daily bars,
+   - `search_contracts` (security_type STK) on the underlying symbol → resolve
+     `contract_id` (exact symbol match, US primary listing) — required before
+     `get_price_history` will work.
+   - Call `get_price_history` using that contract_id (at least 155 daily bars,
      recommend 220 bars for MA150 margin).
    - Write the payload immediately with the **Write** tool to:
      `$ARIA_HOME/state/scratch/signal_input_<TICKER>_exit.json`
@@ -60,7 +63,16 @@ connected."
    - Compute DTE (days to expiration) from the position's expiration date vs today's date.
    - Compute defined max loss per share = `(short_strike - long_strike) - entry_credit` (and total position max loss = `max_loss_per_share * 100 * contracts`).
 
-4. **Earnings timing check (token economy — non-CLOSE positions only):**
+4. **Live / premarket price freshness check (context only):**
+   - For EVERY position (regardless of whether it triggered CLOSE, RECOMMEND EXIT, WATCH, or HOLD):
+   - Call `get_price_snapshot` on the underlying's STK `contract_id` (already resolved via `search_contracts` in step 2 — reuse it, do NOT re-resolve) to get the current live/premarket last price.
+   - Compare the live/premarket last price against the settled close used in step 2's calculation:
+     - If the live price differs meaningfully from the settled close (say >1%) AND that difference would plausibly change the picture (e.g. live price back above the short strike or MA150 when the settled read showed a breach, or vice versa moving further against the position), add a `PREMARKET NOTE:` line to that position's output row: state the settled close, the live price, and which direction it moved relative to the short strike / MA150 — factual, no recommendation, verify-manually framing (matches this file's existing "human decides" principle at the bottom).
+     - If `get_price_snapshot` does not return usable data for the underlying's STK `contract_id` (before concluding any tool is unavailable: call it — don't assume it won't work, actually call it and see), note `PREMARKET NOTE: premarket price: unavailable — verify manually` rather than silently omitting the check. This must NOT count as a SIGNALS_FAILED-style failure — it is a soft annotation gap, same tier as "earnings: unknown."
+     - If the live price difference is negligible or does not alter the technical picture, omit the `PREMARKET NOTE:` line.
+   - **CRITICAL:** This live price is **CONTEXT ONLY**. The verdict (`CLOSE` / `RECOMMEND EXIT` / `WATCH` / `HOLD`) is still computed entirely from the SETTLED read per steps 2–3, unchanged. This step NEVER changes, overrides, or suppresses a verdict, only annotates it — do not let this step's existence create any ambiguity about which price is authoritative for classification.
+
+5. **Earnings timing check (token economy — non-CLOSE positions only):**
    - Run this check ONLY for positions that did NOT already trigger a hard CLOSE
      in steps 2–3 — i.e. skip it if ANY of: `thesis_invalidated: true`,
      `pct_max_profit_captured >= 0.80`, OR (`DTE <= 7` AND NOT underwater). A
@@ -70,7 +82,7 @@ connected."
    - If the next confirmed earnings date falls BEFORE the position's expiration date AND the underlying's close is within 5% of the short strike (`close <= short_strike * 1.05`): flag `EARNINGS_RISK`.
    - If the earnings date is not confirmable: note "earnings: unknown — verify manually" (do NOT treat unknown as a trigger, and do NOT treat unknown as clear either).
 
-5. **Classify position verdict:**
+6. **Classify position verdict:**
    **Design principle — judgment may escalate, never suppress.** Hard-CLOSE triggers are deterministic and must never be downgraded, overridden, or suppressed by any judgment check. RECOMMEND EXIT is an escalation tier evaluated when no hard-CLOSE trigger fired, or to surface genuine judgment calls.
 
    - 🔴 **CLOSE (hard, unconditional, deterministic — unchanged trigger strength):**
@@ -98,15 +110,18 @@ Format:
 Bull Put Spread Exit Guard — <date>
 <N> open position(s) found.
 
-[one line per position]
+[one line per position, followed by optional PREMARKET NOTE line]
 ```
 
 Line format for each position:
 `[Ticker] [short_strike]/[long_strike] exp=[date] DTE=[n] | captured=[pct]% | verdict=[CLOSE/RECOMMEND EXIT/WATCH/HOLD] | reason=[why, including any reason code and the light-volume annotation when applicable]`
 (`[pct]` = `pct_max_profit_captured * 100`, e.g. a ratio of 0.35 displays as "35", not "0.35" — the underlying ratio is still what all threshold comparisons above use.)
 
+If a premarket note applies (meaningful move vs strike/MA150 or data unavailable), place it on its own line directly after that position's main verdict line, before moving to the next position:
+`  PREMARKET NOTE: [settled close, live price, and movement vs strike/MA150, or "premarket price: unavailable — verify manually"]`
+
 Then, on its own final line, emit exactly:
 POSITIONS_CHECKED: <N>
 
-Do not add commentary, recommendations, or risk assessment beyond the verdict and one-line reason — this is a factual listing only. The human decides what action to take.
+Do not add commentary, recommendations, or risk assessment beyond the verdict, one-line reason, and factual premarket note — this is a factual listing only. The human decides what action to take.
 
