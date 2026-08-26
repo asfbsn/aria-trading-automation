@@ -31,8 +31,11 @@ CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-4-8}"
 # Read-only IBKR tools for positions, price history, and option snapshots
 # + scoped write to scratch for JSON input + scoped compute_exit_signal.py Bash prefix.
 # We deliberately do NOT allow any order-placement/modification tools.
+# WebSearch: earnings-proximity check for the new RECOMMEND EXIT escalation layer
+# (read-only, best-effort; still zero order-placement capability).
 CLAUDE_ALLOWED_TOOLS_BASE="\
 Edit(/${ARIA_HOME}/state/scratch/signal_input_*.json),\
+WebSearch,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_account_positions,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_price_history,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_price_snapshot,\

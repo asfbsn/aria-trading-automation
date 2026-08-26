@@ -180,10 +180,21 @@ def exit_checks(closes, bars, short_strike, rsis=None):
     rsi_now = rsis[-1]
     ma150 = sma(closes, 150)
     close = closes[-1]
+    volumes = [b["volume"] for b in bars]
+    vol_ma20 = sma(volumes, VOLUME_MA_LENGTH)
+
+    short_breached = short_strike is not None and close < short_strike
+    ma150_breached = ma150 is not None and close < ma150
+    volume_confirmed = (
+        (short_breached or ma150_breached)
+        and vol_ma20 is not None
+        and volumes[-1] > vol_ma20
+    )
 
     checks = {
-        "short_strike_breached": short_strike is not None and close < short_strike,
-        "broke_ma150_support": ma150 is not None and close < ma150,
+        "short_strike_breached": short_breached,
+        "broke_ma150_support": ma150_breached,
+        "volume_confirmed_breakdown": volume_confirmed,
         "rsi_overbought": rsi_now is not None and rsi_now > 70.0,
     }
     pattern = bearish_candle_pattern(
@@ -198,4 +209,5 @@ def exit_checks(closes, bars, short_strike, rsis=None):
     # discretionary WATCH signals only, never force a close on their own.
     thesis_invalidated = checks["short_strike_breached"] or checks["broke_ma150_support"]
     return checks, thesis_invalidated
+
 

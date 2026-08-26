@@ -69,9 +69,10 @@ Two companion guards (separate schedules/locks, both read-only, Telegram-deliver
   (added after a forgotten GTC close order gap-filled at the 2026-08-25 open).
   Delivery failure fails the run loudly; long lists warn on truncation.
 - **`exit-guard.sh`** — monitors open bull-put-spread positions (validated leg
-  pairs only) via `scripts/compute_exit_signal.py`: CLOSE on thesis invalidation
-  (close below short strike or MA150), ≥80% profit captured, or DTE≤7; WATCH on
-  RSI>70 / bearish reversal candle; HOLD otherwise.
+  pairs only) via `scripts/compute_exit_signal.py` across four verdict tiers:
+  CLOSE (thesis broken, ≥80% profit captured, DTE≤7 not underwater),
+  RECOMMEND EXIT (imminent earnings within 5% of strike, DTE≤7 underwater),
+  WATCH (RSI>70, bearish candle), or HOLD.
 
 A **watchdog** (`watchdog.sh`, pure bash+curl, no Claude usage) runs at 19:45 and
 Telegram-alerts if a complete report wasn't produced — so a silent miss never goes
@@ -83,7 +84,7 @@ unnoticed.
 |---|---|
 | `daily-scan.sh` | Main wrapper: env, lock, skip logic + 19:00–20:00 window check, local prescreen, headless Claude run, shortlist-membership validation, alerting |
 | `gtc-guard.sh` | Pre-open safety check: Telegram-lists every live order for human review (prompt: `prompts/gtc-order-guard.md`) |
-| `exit-guard.sh` | Open-position exit monitor: CLOSE/WATCH/HOLD verdicts per spread (prompt: `prompts/bull-put-spread-exit.md`) |
+| `exit-guard.sh` | Open-position exit monitor: CLOSE/RECOMMEND EXIT/WATCH/HOLD verdicts per spread (prompt: `prompts/bull-put-spread-exit.md`) |
 | `watchdog.sh` | Safety net — alerts if the day's report didn't complete |
 | `data/universe.csv` | Static candidate universe (ticker, sector, approx market cap) — replaces the live screener list |
 | `scripts/prescreen.py` | Local yfinance prescreen: universe → shortlist JSON (`state/scratch/prescreen_<date>.json`) with full `entry_checks()`; authoritative `entry_confirmed` for non-finalists, pass-through on data failures |
