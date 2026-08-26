@@ -148,7 +148,7 @@ def main():
         ma150 = sma(closes, 150)
         close = closes[-1]
 
-        checks, _ = entry_checks(closes, volumes, bars, rsis=rsis)
+        checks, entry_confirmed = entry_checks(closes, volumes, bars, rsis=rsis)
 
         # Shortlist rule (deliberately OVER-INCLUSIVE):
         # (a) close > MA150 * 0.99 (above_ma150 with a 1% grace margin), AND
@@ -166,6 +166,7 @@ def main():
                     "ma50": round(ma50, 2),
                     "ma150": round(ma150, 2),
                     "rsi20": round(rsi_now, 2) if rsi_now is not None else None,
+                    "entry_confirmed": bool(entry_confirmed),
                     "checks": checks,
                 }
 

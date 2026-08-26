@@ -2,9 +2,12 @@
 
 Automated, unattended scanner that evaluates a static large/mid-cap US universe
 every trading day and delivers a two-table Bull Put Spread report (desktop
-notification + Telegram). Entry signal and option-chain verification run
-against **IBKR** data only, via a headless Claude process — no TradingView
-dependency in the automated path.
+notification + Telegram), via a headless Claude process — no TradingView
+dependency in the automated path. Two-phase signal source: the bulk of the
+universe is classified locally from yfinance data (Phase A); **IBKR** is the
+sole authoritative source for the finalist set — every name that can reach a
+PRIME classification or a trade directive is IBKR-verified (Phase B), and all
+option-chain/pricing data is always IBKR, never yfinance.
 
 > This used to drive TradingView Desktop live (via the `tradingview-bridge`
 > MCP) for both the screener list and the entry-signal dashboard read. Both
@@ -22,13 +25,24 @@ dependency in the automated path.
 
 1. **Prescreen locally** (`scripts/prescreen.py`, yfinance, zero Claude/IBKR usage):
    cuts the ~654-ticker universe to a shortlist (~130–140 live-tested) using
-   deliberately widened MA-band rules. Over-inclusive by design — a name yfinance
-   can't evaluate passes through rather than being dropped; only a confirmed band
-   failure filters a name before the authoritative IBKR stage. ~80% token saving.
-2. **Scan** every shortlisted ticker on the Daily (1D) interval: pull IBKR bars, run
-   `scripts/compute_signal.py` locally (RSI(20), MA50/MA150, volume, candle
-   pattern — a deterministic proxy for the entry signal). IBKR + compute_signal.py
-   remain the sole authoritative signal; prescreen values are reference only.
+   deliberately widened MA-band rules, and computes full entry-signal checks
+   locally for every shortlisted name via `signal_core.entry_checks()`.
+   Over-inclusive by design — a name yfinance can't evaluate passes through to
+   the shortlist rather than being dropped; only a confirmed band failure
+   filters a name before the scan stage.
+2. **Two-Phase Scan** on the Daily (1D) interval:
+   - **Phase A (Local classification, zero IBKR calls):** Claude classifies
+     ~125–130 non-finalist shortlisted names into REJECT/RADAR directly from
+     prescreen's local data (zero tool calls, near-zero tokens). Tradeoff stated
+     plainly: REJECT/RADAR decisions for the bulk of the universe are now made
+     on yfinance data, not IBKR — a same-session validation (49 real tickers)
+     found 49/49 agreement on `entry_confirmed`, but this is a real tradeoff,
+     not a transparent no-op.
+   - **Phase B (Authoritative IBKR verification):** Only the finalist set
+     (local `entry_confirmed: true` candidates + prescreen data failures,
+     typically <=15/day) pulls IBKR bars and runs `scripts/compute_signal.py`
+     (settled & provisional passes). IBKR remains the sole authoritative signal
+     source for all finalists and any name that can reach a directive.
 3. **Verify** R/R on the live IBKR option chain for PRIME-eligible names only.
 4. **Research-gate** each surviving PRIME name (WebSearch/WebFetch): earnings
    timing vs expiry, analyst sentiment, news catalysts, SEC filings. A red flag on
@@ -72,7 +86,7 @@ unnoticed.
 | `exit-guard.sh` | Open-position exit monitor: CLOSE/WATCH/HOLD verdicts per spread (prompt: `prompts/bull-put-spread-exit.md`) |
 | `watchdog.sh` | Safety net — alerts if the day's report didn't complete |
 | `data/universe.csv` | Static candidate universe (ticker, sector, approx market cap) — replaces the live screener list |
-| `scripts/prescreen.py` | Local yfinance prescreen: universe → shortlist JSON (`state/scratch/prescreen_<date>.json`), over-inclusive, pass-through on data failures |
+| `scripts/prescreen.py` | Local yfinance prescreen: universe → shortlist JSON (`state/scratch/prescreen_<date>.json`) with full `entry_checks()`; authoritative `entry_confirmed` for non-finalists, pass-through on data failures |
 | `scripts/compute_exit_signal.py` | Exit-signal computation for open positions (thesis invalidation vs short strike / MA150) |
 | `scripts/refresh_universe.py` | Regenerates `data/universe.csv` from the iShares Russell 1000 (IWB) holdings CSV, filtered to $10B–$5T approx market cap. Re-run every 1–3 months (see the script's docstring for why and how to update the calibration constant) |
 | `scripts/compute_signal.py` | Local entry-signal proxy (RSI/MA/volume/candle) computed from IBKR bars — replaces the TradingView dashboard read |

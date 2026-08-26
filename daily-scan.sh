@@ -204,6 +204,7 @@ if [ "$PRESCREEN_EC" -ne 0 ]; then
   exit 1
 fi
 SHORTLIST_COUNT="$(python3 -c "import json; print(len(json.load(open('$PRESCREEN_FILE'))['shortlist']))")"
+EXPECTED_FINALISTS="$(python3 -c "import json; d=json.load(open('$PRESCREEN_FILE')); print(sum(1 for v in d['per_ticker'].values() if v.get('entry_confirmed')) + len(d['failures']))")"
 
 # ===========================================================================
 # 3. Headless Claude scan against data/universe.csv
@@ -273,19 +274,25 @@ fi
 # 5. Done — desktop notification
 # ===========================================================================
 # Success requires a clean exit AND a structured completion record proving
-# every shortlisted ticker was actually processed — a loose text-headline check
-# (e.g. grepping for "PRIME|RADAR|REJECT") is bypassable: a clean run that
-# reports an IBKR error as a REJECT for every ticker, while still emitting
-# SCREENER_CONSTITUENTS, would pass a headline check without processing any
+# every shortlisted ticker was actually processed and all finalists were verified —
+# a loose text-headline check (e.g. grepping for "PRIME|RADAR|REJECT") is bypassable:
+# a clean run that reports an IBKR error as a REJECT for every ticker, while still
+# emitting SCREENER_CONSTITUENTS, would pass a headline check without processing any
 # real signal, and the watchdog would never fire. So require:
-#   1. SIGNALS_COMPLETED + SIGNALS_FAILED both present and parse as integers
+#   1. SIGNALS_COMPLETED + SIGNALS_FAILED + FINALISTS_VERIFIED present and parse as integers
 #   2. SIGNALS_FAILED == 0            (any tool/data failure = hard fail)
 #   3. SIGNALS_COMPLETED == shortlist count (from prescreen JSON)
+#   4. FINALISTS_VERIFIED == expected finalists count (prescreen entry_confirmed + failures)
+#      Why: closes the gap where Claude could under-route names to the expensive Phase B
+#      verification phase to save tokens/time without the wrapper catching it — a run that
+#      verifies fewer finalists than prescreen implies must fail loudly, same principle
+#      as the SIGNALS_FAILED>0 hard-fail.
 set +e   # bulletproof the alert/exit path: never let a stray non-zero (notify-send
          # failing under cron, grep -c returning 1, etc.) trip set -e and skip the alert.
 trap - ERR
 SIGNALS_COMPLETED="$(grep -m1 '^SIGNALS_COMPLETED:' "$LOG_FILE" | grep -oE '[0-9]+' | head -1)"
 SIGNALS_FAILED="$(grep -m1 '^SIGNALS_FAILED:' "$LOG_FILE" | grep -oE '[0-9]+' | head -1)"
+FINALISTS_VERIFIED="$(grep -m1 '^FINALISTS_VERIFIED:' "$LOG_FILE" | grep -oE '[0-9]+' | head -1)"
 # Membership check, not just cardinality: SCREENER_CONSTITUENTS must be exactly
 # the prescreen shortlist (sorted-list compare, so duplicates/substitutions fail
 # too) — a count-only check can't catch the prompt silently swapping tickers.
@@ -302,7 +309,9 @@ if [ "${CLAUDE_EC:-1}" = "0" ] \
   && [ "$CONSTITUENTS_MATCH" = "yes" ] \
   && [ -n "$SIGNALS_COMPLETED" ] && [ -n "$SIGNALS_FAILED" ] \
   && [ "$SIGNALS_FAILED" = "0" ] \
-  && [ "$SIGNALS_COMPLETED" = "$SHORTLIST_COUNT" ]; then
+  && [ "$SIGNALS_COMPLETED" = "$SHORTLIST_COUNT" ] \
+  && [ -n "$FINALISTS_VERIFIED" ] \
+  && [ "$FINALISTS_VERIFIED" = "$EXPECTED_FINALISTS" ]; then
   notify "ARIA scan ready ✓" "$TODAY — log saved"
   # Put the ACTUAL report (headline + PRIME/RADAR tables) into the message body,
   # not a generic line — and still attach the full file. Trimmed to stay under
@@ -316,6 +325,6 @@ else
   notify "ARIA scan FAILED" "incomplete — see log"
   REASON="$(sed -n '3,6p' "$LOG_FILE" | head -c 800)"
   send_telegram "🔴 ARIA scan FAILED / incomplete — ${TODAY}. Reason: ${REASON:-unknown}. Full log attached." "$LOG_FILE"
-  echo "[$RUN_TS] FAILURE: claude_ec=${CLAUDE_EC:-?}, marker=$(grep -c '^SCREENER_CONSTITUENTS:' "$LOG_FILE" 2>/dev/null || echo 0), constituents_match=${CONSTITUENTS_MATCH:-?}, signals_completed=${SIGNALS_COMPLETED:-?}, signals_failed=${SIGNALS_FAILED:-?}, shortlist_count=${SHORTLIST_COUNT:-?}" >>"$ERR_FILE"
+  echo "[$RUN_TS] FAILURE: claude_ec=${CLAUDE_EC:-?}, marker=$(grep -c '^SCREENER_CONSTITUENTS:' "$LOG_FILE" 2>/dev/null || echo 0), constituents_match=${CONSTITUENTS_MATCH:-?}, signals_completed=${SIGNALS_COMPLETED:-?}, signals_failed=${SIGNALS_FAILED:-?}, shortlist_count=${SHORTLIST_COUNT:-?}, finalists_verified=${FINALISTS_VERIFIED:-?}, expected_finalists=${EXPECTED_FINALISTS:-?}" >>"$ERR_FILE"
   exit 1
 fi
