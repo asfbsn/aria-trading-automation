@@ -292,13 +292,14 @@ unsettled) changes separately. Produce, in order:
   gets its own clearly labeled one-liner naming the specific finding (not
   lumped anonymously with technical rejects).
 
-After the report, emit these FOUR lines, each on its own line, in this exact
+After the report, emit these FIVE lines, each on its own line, in this exact
 order, as the literal last thing you output:
 
 SCREENER_CONSTITUENTS: SYM1,SYM2,SYM3,...
 SIGNALS_COMPLETED: <count of tickers where either Phase A local classification or Phase B IBKR verification produced a classification (REJECT, RADAR, or PRIME)>
 SIGNALS_FAILED: <count of tickers you could NOT reach ANY definitive answer for — a genuine tool exception, timeout, or empty/malformed response where you got nothing usable. A shortlisted ticker missing from prescreen's JSON entirely also counts here>
 FINALISTS_VERIFIED: <count of finalist tickers where Phase B reached a definitive, final answer — REJECT, RADAR, or PRIME. This INCLUDES `insufficient_data` (compute_signal.py ran and told you there weren't enough bars — that's a real, final REJECT reason, not a failure) and "no contract found" (search_contracts genuinely returned nothing — also a real, final REJECT reason). The litmus test: if you can write a REJECT reason for the ticker, it counts here, NOT in SIGNALS_FAILED>
+FINALISTS_VERIFIED_TICKERS: <comma-separated list of the exact tickers counted in FINALISTS_VERIFIED above — the wrapper compares this set (not just the count) against the prescreen-derived expected finalist set, so it must name every one, no substitutions>
 
 **Litmus test for SIGNALS_FAILED vs a REJECT (applies in both Phase A and Phase B):**
 if you have ANY definitive answer to report — including "insufficient data",
@@ -320,4 +321,8 @@ are NOT tool-call breakages — see the litmus test above.
 FINALISTS_VERIFIED must equal the count of (prescreen entry_confirmed==true tickers)
 + (prescreen failures count) — the wrapper validates this independently from the
 prescreen JSON, so don't try to game it by routing fewer names to Phase B than
-prescreen's data implies.
+prescreen's data implies. FINALISTS_VERIFIED_TICKERS must be exactly that same
+set of tickers (order doesn't matter, the wrapper sorts both sides) — matching
+the count alone is not enough; the wrapper checks membership too, so silently
+swapping one expected finalist for an unexpected one fails the run even if the
+count still lines up.

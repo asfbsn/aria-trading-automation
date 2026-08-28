@@ -27,6 +27,20 @@ MA150_BAND = (0.0, 0.10)  # close is 0%-10% ABOVE MA150: (close-ma150)/ma150 in 
 VOLUME_MA_LENGTH = 20
 MIN_BARS = 150 + 5
 
+# Gate check categorization for backtest A/B comparison (not yet wired into live scan)
+STRUCTURAL_KEYS = (
+    "above_ma150",
+    "rsi_below_50",
+    "near_ma50_pullback",
+    "near_ma150_support",
+)
+CONFIRM_KEYS = (
+    "rsi_rising",
+    "volume_above_avg",
+    "bullish_candle",
+)
+
+
 
 def bars_from_parallel_arrays(payload):
     """Zip IBKR get_price_history's parallel-array response into the
@@ -107,10 +121,21 @@ def candle_pattern(o, h, l, c, prev_o, prev_c):
     return "none"
 
 
-def entry_checks(closes, volumes, bars, rsis=None):
+def entry_checks(
+    closes,
+    volumes,
+    bars,
+    rsis=None,
+    min_structural=None,
+    min_confirm=None,
+):
     """Evaluate the full entry rule on the last element of the given
     ascending series (which share a common length). Returns (checks dict,
-    entry_confirmed bool)."""
+    entry_confirmed bool).
+
+    Optional min_structural and min_confirm parameters are for backtest A/B
+    comparison and are not yet wired into the live scan.
+    """
     if rsis is None:
         rsis = rsi_series(closes)
     rsi_now = rsis[-1]
@@ -145,8 +170,18 @@ def entry_checks(closes, volumes, bars, rsis=None):
     checks["bullish_candle"] = pattern != "none"
     checks["candle_pattern"] = pattern
 
-    confirmed = all(v for k, v in checks.items()
-                    if k != "candle_pattern")
+    # Gate confirmation: default (None, None) keeps exact legacy all-7 behavior.
+    # When parameterized for backtest A/B comparison:
+    # entry_confirmed = (structural checks >= min_structural) and (confirm checks >= min_confirm).
+    if min_structural is None and min_confirm is None:
+        confirmed = all(v for k, v in checks.items()
+                        if k != "candle_pattern")
+    else:
+        req_struct = len(STRUCTURAL_KEYS) if min_structural is None else min_structural
+        req_conf = len(CONFIRM_KEYS) if min_confirm is None else min_confirm
+        struct_passed = sum(1 for k in STRUCTURAL_KEYS if checks.get(k, False)) >= req_struct
+        conf_passed = sum(1 for k in CONFIRM_KEYS if checks.get(k, False)) >= req_conf
+        confirmed = struct_passed and conf_passed
     return checks, confirmed
 
 

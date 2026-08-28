@@ -38,9 +38,17 @@ TARGET_DTE = 30
 class BullPutSpreadSignalEngine:
     """engine.generate(data_map) -> list[dict] for run_options_backtest."""
 
-    def __init__(self, width: float = SPREAD_WIDTH, target_dte: int = TARGET_DTE):
+    def __init__(
+        self,
+        width: float = SPREAD_WIDTH,
+        target_dte: int = TARGET_DTE,
+        min_structural: int | None = None,
+        min_confirm: int | None = None,
+    ):
         self.width = width
         self.target_dte = target_dte
+        self.min_structural = min_structural
+        self.min_confirm = min_confirm
         self.entries: List[Dict[str, Any]] = []  # collected for reporting
 
     def generate(self, data_map: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -77,7 +85,11 @@ class BullPutSpreadSignalEngine:
                     for j in (i - 1, i)
                 ]
                 checks, entry_confirmed = entry_checks(
-                    closes[: i + 1], volumes[: i + 1], bars_slice
+                    closes[: i + 1],
+                    volumes[: i + 1],
+                    bars_slice,
+                    min_structural=self.min_structural,
+                    min_confirm=self.min_confirm,
                 )
                 if not entry_confirmed:
                     continue

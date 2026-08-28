@@ -116,11 +116,18 @@ FORCE_RUN=true PROMPT_FILE="$PWD/prompts/bull-put-spread-ror50.md" ./daily-scan.
 # install the schedule:
 ( crontab -l 2>/dev/null; cat <<'CRON'
 CRON_TZ=Asia/Jerusalem
-# Pre-open guards (16:00 Israel / ~9:00 ET — 30m pre-open gives exit-guard live premarket prices to check & lands gtc-guard order review before 9:30 ET open):
-0  16 * * 1-5 $HOME/Projects/aria-trading/gtc-guard.sh  >> $HOME/Projects/aria-trading/logs/gtc-guard.log 2>&1
-0  16 * * 1-5 $HOME/Projects/aria-trading/exit-guard.sh >> $HOME/Projects/aria-trading/logs/exit-guard.log 2>&1
 0  19 * * 1-5 $HOME/Projects/aria-trading/daily-scan.sh >> $HOME/Projects/aria-trading/logs/cron.log 2>&1
 45 19 * * 1-5 $HOME/Projects/aria-trading/watchdog.sh   >> $HOME/Projects/aria-trading/logs/watchdog.log 2>&1
+
+# Pre-open guards, anchored to America/New_York (NOT a fixed Israel local time —
+# 16:00 Israel is only ~9:00 ET when both countries' DST happen to align; during
+# the ~2-3 weeks/year Israel/US DST transitions don't coincide it drifts to
+# ~10:00 ET, after the open, defeating exit-guard's premarket check and delaying
+# gtc-guard past 9:30 ET. Anchoring the cron zone itself to America/New_York
+# keeps this correct year-round with no manual DST bookkeeping):
+CRON_TZ=America/New_York
+0 9 * * 1-5 $HOME/Projects/aria-trading/gtc-guard.sh  >> $HOME/Projects/aria-trading/logs/gtc-guard.log 2>&1
+0 9 * * 1-5 $HOME/Projects/aria-trading/exit-guard.sh >> $HOME/Projects/aria-trading/logs/exit-guard.log 2>&1
 CRON
 ) | crontab -
 ```

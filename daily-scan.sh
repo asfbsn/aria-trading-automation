@@ -304,6 +304,21 @@ syms = sorted(s.strip() for s in m.group(1).split(',') if s.strip()) if m else N
 short = sorted(json.load(open('$PRESCREEN_FILE'))['shortlist'])
 print('yes' if syms == short else 'no')
 " 2>>"$ERR_FILE")"
+# Same membership check for finalists: FINALISTS_VERIFIED matching the expected
+# COUNT isn't enough — a run could verify the right number of finalists while
+# silently omitting one prescreen implied and substituting an unrelated ticker.
+# FINALISTS_VERIFIED_TICKERS must be exactly (entry_confirmed==true tickers) +
+# (failures tickers) from prescreen, sorted-list compare same as constituents.
+FINALISTS_MATCH="$(python3 -c "
+import json, re, sys
+log = open('$LOG_FILE').read()
+m = re.search(r'^FINALISTS_VERIFIED_TICKERS:(.*)\$', log, re.M)
+syms = sorted(s.strip() for s in m.group(1).split(',') if s.strip()) if m else None
+d = json.load(open('$PRESCREEN_FILE'))
+expected = sorted([t for t, v in d['per_ticker'].items() if v.get('entry_confirmed')]
+                   + [f['ticker'] for f in d['failures']])
+print('yes' if syms == expected else 'no')
+" 2>>"$ERR_FILE")"
 if [ "${CLAUDE_EC:-1}" = "0" ] \
   && grep -q '^SCREENER_CONSTITUENTS:' "$LOG_FILE" \
   && [ "$CONSTITUENTS_MATCH" = "yes" ] \
@@ -311,7 +326,9 @@ if [ "${CLAUDE_EC:-1}" = "0" ] \
   && [ "$SIGNALS_FAILED" = "0" ] \
   && [ "$SIGNALS_COMPLETED" = "$SHORTLIST_COUNT" ] \
   && [ -n "$FINALISTS_VERIFIED" ] \
-  && [ "$FINALISTS_VERIFIED" = "$EXPECTED_FINALISTS" ]; then
+  && [ "$FINALISTS_VERIFIED" = "$EXPECTED_FINALISTS" ] \
+  && grep -q '^FINALISTS_VERIFIED_TICKERS:' "$LOG_FILE" \
+  && [ "$FINALISTS_MATCH" = "yes" ]; then
   notify "ARIA scan ready ✓" "$TODAY — log saved"
   # Put the ACTUAL report (headline + PRIME/RADAR tables) into the message body,
   # not a generic line — and still attach the full file. Trimmed to stay under
@@ -325,6 +342,6 @@ else
   notify "ARIA scan FAILED" "incomplete — see log"
   REASON="$(sed -n '3,6p' "$LOG_FILE" | head -c 800)"
   send_telegram "🔴 ARIA scan FAILED / incomplete — ${TODAY}. Reason: ${REASON:-unknown}. Full log attached." "$LOG_FILE"
-  echo "[$RUN_TS] FAILURE: claude_ec=${CLAUDE_EC:-?}, marker=$(grep -c '^SCREENER_CONSTITUENTS:' "$LOG_FILE" 2>/dev/null || echo 0), constituents_match=${CONSTITUENTS_MATCH:-?}, signals_completed=${SIGNALS_COMPLETED:-?}, signals_failed=${SIGNALS_FAILED:-?}, shortlist_count=${SHORTLIST_COUNT:-?}, finalists_verified=${FINALISTS_VERIFIED:-?}, expected_finalists=${EXPECTED_FINALISTS:-?}" >>"$ERR_FILE"
+  echo "[$RUN_TS] FAILURE: claude_ec=${CLAUDE_EC:-?}, marker=$(grep -c '^SCREENER_CONSTITUENTS:' "$LOG_FILE" 2>/dev/null || echo 0), constituents_match=${CONSTITUENTS_MATCH:-?}, signals_completed=${SIGNALS_COMPLETED:-?}, signals_failed=${SIGNALS_FAILED:-?}, shortlist_count=${SHORTLIST_COUNT:-?}, finalists_verified=${FINALISTS_VERIFIED:-?}, expected_finalists=${EXPECTED_FINALISTS:-?}, finalists_match=${FINALISTS_MATCH:-?}" >>"$ERR_FILE"
   exit 1
 fi

@@ -22,7 +22,8 @@ connected."
    ABOVE long strike. Unpaired or ambiguous option legs are NOT treated as
    spreads — list them separately as "unpaired legs — verify manually" instead
    of guessing a pairing.
-   If no open bull-put-spread positions exist, output:
+   If the account holds ZERO option legs at all (not just zero valid spread
+   pairs), output:
    ```
    Bull Put Spread Exit Guard — <date>
    0 open position(s) found.
@@ -31,9 +32,24 @@ connected."
 
    POSITIONS_CHECKED: 0
    ```
-   and stop (empty is not an error, same as GTC guard — the final marker line
-   is still required so the wrapper recognizes this as a successful run, not
-   a failure).
+   and stop. But if there are zero valid spread PAIRS while one or more
+   unpaired/ambiguous option legs exist, do NOT use the message above — it
+   would hide a real open position and its risk. Instead output:
+   ```
+   Bull Put Spread Exit Guard — <date>
+   0 open position(s) found.
+
+   No open bull-put-spread positions, but N unpaired/ambiguous option leg(s)
+   found — verify manually:
+     [TICKER] [side] [strike] [expiry] qty=[n] — [why it didn't pair, e.g.
+     "no matching offsetting leg", "same underlying/expiry but not both
+     puts", "quantities don't offset"]
+
+   POSITIONS_CHECKED: 0
+   ```
+   and stop (empty of valid spreads is not an error, same as GTC guard — the
+   final marker line is still required so the wrapper recognizes this as a
+   successful run, not a failure).
 
 2. **Compute technical exit signal:** For each open position pair:
    - `search_contracts` (security_type STK) on the underlying symbol → resolve
@@ -75,8 +91,9 @@ connected."
 5. **Earnings timing check (token economy — non-CLOSE positions only):**
    - Run this check ONLY for positions that did NOT already trigger a hard CLOSE
      in steps 2–3 — i.e. skip it if ANY of: `thesis_invalidated: true`,
-     `pct_max_profit_captured >= 0.80`, OR (`DTE <= 7` AND NOT underwater). A
-     position already hard-CLOSEd doesn't need an earnings read.
+     `pct_max_profit_captured >= 0.80`, `DTE < 0` (already expired — unconditional
+     CLOSE regardless of profit/loss, see step 6), OR (`0 <= DTE <= 7` AND NOT
+     underwater). A position already hard-CLOSEd doesn't need an earnings read.
    - Run one `WebSearch` for the ticker's next confirmed earnings date.
    - Compare the next confirmed earnings date against the position's expiration date.
    - If the next confirmed earnings date falls BEFORE the position's expiration date AND the underlying's close is within 5% of the short strike (`close <= short_strike * 1.05`): flag `EARNINGS_RISK`.
