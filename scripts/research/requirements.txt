@@ -1,0 +1,8 @@
+# Isolated research-venv dependencies for scripts/research/*.py.
+# Install into a DEDICATED venv (~/venvs/trading-eval), never the system
+# python3 the live cron pipeline uses (daily-scan.sh calls system python3
+# directly, no venv) -- see docs/research-methodology.md for why.
+investing-algorithm-framework==8.10.0
+pandas==3.0.5
+numpy==2.5.2
+yfinance==1.7.0

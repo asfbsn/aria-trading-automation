@@ -89,9 +89,10 @@ unnoticed.
 | `data/universe.csv` | Static candidate universe (ticker, sector, approx market cap) — replaces the live screener list |
 | `scripts/prescreen.py` | Local yfinance prescreen: universe → shortlist JSON (`state/scratch/prescreen_<date>.json`) with full `entry_checks()`; authoritative `entry_confirmed` for non-finalists, pass-through on data failures |
 | `scripts/compute_exit_signal.py` | Exit-signal computation for open positions (thesis invalidation vs short strike / MA150) |
-| `scripts/refresh_universe.py` | Regenerates `data/universe.csv` from the iShares Russell 1000 (IWB) holdings CSV, filtered to $10B–$5T approx market cap. Re-run every 1–3 months (see the script's docstring for why and how to update the calibration constant) |
+| `scripts/refresh_universe.py` | Regenerates `data/universe.csv` from a 4-source union (S&P 500, S&P MidCap 400, Russell 3000, Nasdaq-100) with real per-ticker market cap via yfinance, filtered to $10B–$5T. Re-run every 1–3 months |
 | `scripts/compute_signal.py` | Local entry-signal proxy (RSI/MA/volume/candle) computed from IBKR bars — replaces the TradingView dashboard read |
 | `scripts/signal_core.py` | Shared entry + exit rule logic between the live scanner and the backtest engine |
+| `scripts/research/` | Standalone statistical research tooling (walk-forward / permutation testing against entry-gate hypotheses), isolated from the live pipeline — see [`docs/research-methodology.md`](docs/research-methodology.md) |
 | `prompts/bull-put-spread.md` | The scan prompt (rules, two-table output, settled-vs-provisional) |
 | `prompts/bull-put-spread-ror50.md` | On-demand IBKR-only strike selector: user-given tickers, dynamic spread widths, ROR≥50% gate, lowest-strike-that-clears rule |
 | `prompts/verify-rr-gate.md` | Ad-hoc wiring check for the IBKR R/R gate (1:1.5–2.5 band) |
