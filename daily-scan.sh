@@ -33,6 +33,10 @@ LOG_DIR="${LOG_DIR:-$ARIA_HOME/logs}"
 STATE_DIR="${STATE_DIR:-$ARIA_HOME/state}"
 PROMPT_FILE="${PROMPT_FILE:-$ARIA_HOME/prompts/bull-put-spread.md}"
 HOLIDAYS_FILE="${HOLIDAYS_FILE:-$ARIA_HOME/us-market-holidays.txt}"
+# Phase B token-protection cap (scripts/prescreen.py --top-k): max entry_confirmed
+# tickers forwarded to IBKR verification. See prescreen.py's --top-k help for the
+# ranking rule (RSI20 ascending, tie-broken by MA150 proximity).
+PRESCREEN_TOP_K="${PRESCREEN_TOP_K:-12}"
 LOCK_FILE="${LOCK_FILE:-$ARIA_HOME/state/daily-scan.lock}"
 
 # Claude project dir = where data/universe.csv and scripts/compute_signal.py
@@ -194,7 +198,7 @@ fi
 # ===========================================================================
 PRESCREEN_FILE="$STATE_DIR/scratch/prescreen_${TODAY}.json"
 set +e
-timeout 10m python3 "$ARIA_HOME/scripts/prescreen.py" --output "$PRESCREEN_FILE" >>"$ERR_FILE" 2>&1
+timeout 10m python3 "$ARIA_HOME/scripts/prescreen.py" --output "$PRESCREEN_FILE" --top-k "$PRESCREEN_TOP_K" >>"$ERR_FILE" 2>&1
 PRESCREEN_EC=$?
 set -e
 if [ "$PRESCREEN_EC" -ne 0 ]; then
