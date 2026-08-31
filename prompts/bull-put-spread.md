@@ -182,17 +182,64 @@ structure — usually 0–3 names; token economy: do NOT price rejects/RADAR),
 verify a COMPLIANT spread actually exists using the IBKR **read-only** option
 tools:
 1. `search_contracts` (security_type STK) → `underlying_contract_id` (exact symbol match, US primary listing).
-2. `get_option_parameters` → pick the expiration nearest **~30 DTE**.
-3. `get_option_data` (bound strikes around support) → `put_contract_id`s at/below the MA-150 & swing low.
-4. `get_price_snapshot` on the candidate short & long puts → bid/ask → use mids.
-5. Compute: **credit = short_mid − long_mid**; **max loss = width − credit**; **R/R = maxloss : credit**.
-   Apply the **tiered strike search (deepest-safest first)**:
+2. **IV percentile check (underlying, once per candidate):** call `get_price_snapshot`
+   on `underlying_contract_id` (the STK contract from step 1) with
+   `market_data_names: ["implied_volatility_percentile"]`.
+   - **Field name / response key convention:** Request arguments use UNDERSCORES
+     (`implied_volatility_percentile`), but IBKR response keys use HYPHENS
+     (`implied-volatility-percentile`). Read `high_13w`, `high_26w`, `high_52w`
+     sub-fields — these are FRACTIONS (0.0 to 1.0; e.g. 0.294 = 29.4th percentile;
+     multiply by 100 for display/check).
+   - **Terminology note:** This uses **IV PERCENTILE** (how current IV compares
+     to the trailing 13/26/52-week range of IV highs), NOT "IV Rank"
+     ((current IV − 52wk low) / (52wk high − 52wk low)). IBKR MCP exposes IV
+     percentile only. Do NOT use `option_midpoint_iv` (per-option IV is unreliable
+     on IBKR MCP and returns `isValid: false`).
+   - **Verdict rule (26-week window `high_26w * 100` as primary threshold; 13w/52w for context):**
+     - If `high_26w * 100 < 30` → **Downgrade to RADAR** (Table 2), reason
+       `IV_LOW: 26-week IV percentile <NN>% < 30 -- insufficient premium for the risk taken`
+       (still proceed to steps 3–7 to price the spread for Table 2).
+     - If `high_26w * 100 > 80` → add informational note ONLY (NOT a downgrade; does
+       not change classification): `IV_HIGH: 26-week IV percentile <NN>% > 80 -- elevated premium may reflect a priced-in event; verify no unexplained catalyst`.
+     - If field is missing / invalid / tool error → note `IV: unavailable — verify manually`
+       (same tier as `earnings: unknown — verify manually`; do NOT downgrade or reject
+       on that basis alone).
+3. `get_option_parameters` → pick the expiration nearest **~30 DTE**.
+4. `get_option_data` (bound strikes around support) → `put_contract_id`s at/below the MA-150 & swing low.
+5. `get_price_snapshot` on candidate short & long puts with
+   `market_data_names: ["bid_ask", "option_open_interest"]` (request uses
+   underscores; response keys are `bid_ask` and hyphenated `option-open-interest`
+   with `callInterest` and `putInterest` integer sub-fields — read `putInterest`
+   for put legs). Compute mids: `mid = (bid + ask) / 2`.
+6. **Option liquidity gate (hard REJECT, per-leg) — evaluated PER CANDIDATE
+   STRIKE PAIR, inside the tiered strike search in step 7, not as a one-shot
+   pre-check.** For EACH candidate leg (short put AND long put) of whichever
+   strike pair the tiered search is currently testing, verify:
+   - Bid-ask spread: `(ask − bid) ≤ $0.30` on BOTH legs.
+   - Open interest: `putInterest ≥ 100` on BOTH legs.
+   - If `(ask − bid) > $0.30` OR `putInterest < 100` on EITHER leg → this
+     candidate strike pair fails, exactly like an R/R-band miss — do NOT
+     compute R/R for it, move to the next strike the tiered search would
+     try (same tier, then Tier 2). Do not reject the whole name over one
+     failed pair while other untested strikes remain.
+   - Only once EVERY candidate pair across BOTH tiers has been tried and
+     none clears BOTH the liquidity gate AND the R/R band → the name is a
+     **REJECT**, reason `Liquidity gate: no strike pair cleared bid-ask
+     ≤$0.30 and open interest ≥100 across tested strikes` (or, if some pairs
+     were liquid but none cleared R/R, use the existing R/R-gate reject
+     reason below instead — name the actual blocking condition, don't
+     default to blaming liquidity if R/R was the real blocker).
+7. Compute: **credit = short_mid − long_mid**; **max loss = width − credit**; **R/R = maxloss : credit**.
+   Apply the **tiered strike search (deepest-safest first)**, testing the
+   liquidity gate (step 6) on each candidate pair alongside its R/R check —
+   a pair must clear BOTH to be eligible:
    - **Tier 1 (Primary target):** Short strike placed a few percentage points below MA-150, OR below the recent local swing low (lowest wicks of recent daily candles) — whichever gives more room. Test if R/R hits **1:1.5–2.5** (credit ≈ width/3.5 … width/2.5).
    - **Tier 2 (Flexibility tier):** If Tier 1 cannot hit R/R 1.5–2.5 at available strike intervals, walk the short strike up — as far as sitting AT the MA-150 line itself, or the lower edge of a genuine multi-day consolidation/basing zone — but **NEVER above MA-150** (absolute hard ceiling).
-   - **Selection rule:** Walk the strike up from the primary target only as far as strictly necessary to clear 1.5–2.5, and stop at the first (deepest/safest) strike that clears the band. Do not pick a shallower strike if a deeper one works.
-- If no strike/width combo across either tier satisfies 1:1.5–2.5 (even with short at MA-150) → the name is a **REJECT**, reason
+   - **Selection rule:** Walk the strike up from the primary target only as far as strictly necessary to clear 1.5–2.5 AND the liquidity gate, and stop at the first (deepest/safest) strike that clears both. Do not pick a shallower strike if a deeper one works.
+- If no strike/width combo across either tier satisfies 1:1.5–2.5 with sufficient liquidity (even with short at MA-150) → the name is a **REJECT**, reason
   "R/R gate: cannot hit 1:1.5–2.5 even at MA-150 flexibility tier" (e.g. the APD/AMZN case where wide strike intervals prevent compliant credit even at the MA-150 ceiling) — do
   NOT list it as PRIME and NEVER place short strike above MA-150.
+- **REJECT always wins over RADAR:** a name with no compliant liquid spread (this step) never becomes RADAR via an IV_LOW or research-gate flag below — those downgrades only ever apply to a name that already has a valid, priced, liquid, R/R-compliant spread. A name with no compliant spread has nothing to price for Table 2 and stays REJECT, full stop.
 - For every PRIME row, report the **verified exact strikes, credit, max loss, max profit, and R/R**.
 - NEVER use order tools (`create_order_instruction`); read-only only.
 
@@ -267,13 +314,19 @@ unsettled) changes separately. Produce, in order:
   `entry_confirmed: true` + strong structure that pass the MA-150 rule, have a
   **live-chain-verified** 1:1.5–2.5 spread via tiered strike search at/below MA-150
   (see R/R VERIFICATION), AND clear the qualitative research gate (all checks clear or
-  unknown/unavailable without red flags). A confirmed name with no compliant
-  spread is a REJECT; any 🔴 research flag on checks 1–3 downgrades to RADAR, and
-  check 4 (SEC) downgrades to REJECT. These alone are execution-ready.
+  unknown/unavailable without red flags). Evaluated in this order: a confirmed
+  name with no compliant liquid spread (fails R/R and/or the liquidity gate
+  across every tested strike) is a REJECT — full stop, it never reaches the
+  IV/research checks below. Only a name that HAS a compliant liquid spread
+  proceeds to IV/research: check 4 (SEC) downgrades that name to REJECT; any
+  🔴 research flag on checks 1–3 or IV percentile below 30 (`IV_LOW`)
+  downgrades it to RADAR instead. Table 1 rows are the ones that cleared every
+  stage — these alone are execution-ready.
 - **Table 2 — 🟡 RADAR / WATCHLIST (discretionary):** "setups in the making"
   (strong structure / weak trigger per rule 5), any "hidden gem" you flag via
   rule 6 (your own TA/price-action/IV), PLUS any research-gate downgrade from
-  PRIME (checks 1–3 🔴 flag) — briefly justify any override or flag. Watch-only.
+  PRIME (checks 1–3 🔴 flag) or IV-percentile downgrade (`IV_LOW`) — briefly
+  justify any override or flag. Watch-only.
 - **📋 Trade Directives:** per-PRIME execution plan blocks (see TRADE DIRECTIVE section above).
 - Columns:
   - **Table 1 (PRIME):** [Ticker] | [Daily Confirmation / why] | [MA-150 / Swing Low]
@@ -283,14 +336,16 @@ unsettled) changes separately. Produce, in order:
   - **Table 2 (RADAR):** [Ticker] | [Daily Confirmation / why] | [MA-150 / Swing Low]
     | [Suggested Structure: Short/Long (short at/below MA-150)] | [Exact R/R & Credit,
     1:1.5–2.5]. List which checks are 🟢 vs 🔴 (+ override reason). Rows arriving
-    via research-gate downgrade must state it explicitly (e.g. "Research-gate
-    downgrade: ANALYST_RED_FLAG — Morgan Stanley downgrade to Underweight, 2026-08-20").
+    via research-gate or IV-percentile downgrade must state it explicitly (e.g.
+    "Research-gate downgrade: ANALYST_RED_FLAG — Morgan Stanley downgrade to Underweight, 2026-08-20"
+    or "IV downgrade: IV_LOW — 26-week IV percentile 22% < 30 -- insufficient premium for the risk taken").
 - **PROVISIONAL note**: any name whose live mid-session bar differs from its settled state.
 - **Rejects**: grouped one-liners (below MA / no support / interval-reject). One
   grouped line: `prescreen-filtered: <prescreen_filtered_count> names (failed loose MA bands locally, never sent through IBKR)`
   plus prescreen "failures" listed with reasons. A `SEC_RED_FLAG` hard-reject
-  gets its own clearly labeled one-liner naming the specific finding (not
-  lumped anonymously with technical rejects).
+  or liquidity-gate REJECT gets its own clearly labeled one-liner naming the specific
+  finding (e.g. "Liquidity gate: short put bid-ask $0.45 > $0.30" or "Liquidity gate: long put open interest 42 < 100",
+  not lumped anonymously with technical rejects).
 
 After the report, emit these FIVE lines, each on its own line, in this exact
 order, as the literal last thing you output:
