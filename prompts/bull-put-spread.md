@@ -309,6 +309,13 @@ Decision basis = the SETTLED (prior closed candle) state; flag PROVISIONAL (toda
 unsettled) changes separately. Produce, in order:
 
 - **Headline** (counts: prime / radar / rejects / finalists verified / how many tickers in prescreen shortlist).
+  These three counts (prime/radar/reject) MUST equal the actual number of rows
+  you write in Table 1, the actual number of rows in Table 2, and the actual
+  count of tickers named across the Rejects section, respectively — compute
+  the headline numbers AFTER the tables/rejects are written, by counting what
+  you just wrote, never from a running tally kept during classification. A
+  running tally drifts silently over ~150+ sequential classifications; a
+  finished table's row count does not.
 - **Market Context** (3–5 lines: VIX level, SPY vs its own MA150 trend, upcoming major macro events inside ~30 days).
 - **Table 1 — 🟢 PRIME CANDIDATES (ready for execution):** ONLY stocks with
   `entry_confirmed: true` + strong structure that pass the MA-150 rule, have a
@@ -351,7 +358,13 @@ After the report, emit these FIVE lines, each on its own line, in this exact
 order, as the literal last thing you output:
 
 SCREENER_CONSTITUENTS: SYM1,SYM2,SYM3,...
-SIGNALS_COMPLETED: <count of tickers where either Phase A local classification or Phase B IBKR verification produced a classification (REJECT, RADAR, or PRIME)>
+SIGNALS_COMPLETED: <MUST be computed as (the exact number of tickers you just
+  listed in SCREENER_CONSTITUENTS above) minus SIGNALS_FAILED below — count the
+  comma-separated symbols you just wrote, do not use a separately-remembered
+  running tally from classifying tickers one by one. This is the same number
+  that must equal prime-rows + radar-rows + reject-tickers-named from the
+  Headline check above; if your Headline counts and this number disagree,
+  recount both from what you actually wrote before emitting either.>
 SIGNALS_FAILED: <count of tickers you could NOT reach ANY definitive answer for — a genuine tool exception, timeout, or empty/malformed response where you got nothing usable. A shortlisted ticker missing from prescreen's JSON entirely also counts here>
 FINALISTS_VERIFIED: <count of finalist tickers where Phase B reached a definitive, final answer — REJECT, RADAR, or PRIME. This INCLUDES `insufficient_data` (compute_signal.py ran and told you there weren't enough bars — that's a real, final REJECT reason, not a failure) and "no contract found" (search_contracts genuinely returned nothing — also a real, final REJECT reason). The litmus test: if you can write a REJECT reason for the ticker, it counts here, NOT in SIGNALS_FAILED>
 FINALISTS_VERIFIED_TICKERS: <comma-separated list of the exact tickers counted in FINALISTS_VERIFIED above — the wrapper compares this set (not just the count) against the prescreen-derived expected finalist set, so it must name every one, no substitutions>
