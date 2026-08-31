@@ -12,5 +12,6 @@ priority-today.md
 # Backtest research tool — its own venv + generated run output
 scripts/backtest/.venv/
 scripts/backtest/run_out/
+scripts/backtest/run_out_bear/
 scripts/backtest/__pycache__/
 scripts/__pycache__/
