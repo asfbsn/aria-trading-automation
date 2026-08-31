@@ -86,6 +86,7 @@ unnoticed.
 | `gtc-guard.sh` | Pre-open safety check: Telegram-lists every live order for human review (prompt: `prompts/gtc-order-guard.md`) |
 | `exit-guard.sh` | Open-position exit monitor: CLOSE/RECOMMEND EXIT/WATCH/HOLD verdicts per spread + live premarket price check (prompt: `prompts/bull-put-spread-exit.md`) |
 | `watchdog.sh` | Safety net — alerts if the day's report didn't complete |
+| `research-reminder.sh` | Quarterly nudge (Telegram/desktop) to re-run the entry-gate research tool — never runs the analysis itself, see `docs/research-methodology.md` |
 | `data/universe.csv` | Static candidate universe (ticker, sector, approx market cap) — replaces the live screener list |
 | `scripts/prescreen.py` | Local yfinance prescreen: universe → shortlist JSON (`state/scratch/prescreen_<date>.json`) with full `entry_checks()`; authoritative `entry_confirmed` for non-finalists, pass-through on data failures |
 | `scripts/compute_exit_signal.py` | Exit-signal computation for open positions (thesis invalidation vs short strike / MA150) |
@@ -129,6 +130,11 @@ CRON_TZ=Asia/Jerusalem
 CRON_TZ=America/New_York
 0 9 * * 1-5 $HOME/Projects/aria-trading/gtc-guard.sh  >> $HOME/Projects/aria-trading/logs/gtc-guard.log 2>&1
 0 9 * * 1-5 $HOME/Projects/aria-trading/exit-guard.sh >> $HOME/Projects/aria-trading/logs/exit-guard.log 2>&1
+
+# Quarterly nudge to re-run the entry-gate research tool (docs/research-methodology.md).
+# Sends a reminder only -- never runs the analysis unattended.
+CRON_TZ=Asia/Jerusalem
+0 9 1 1,4,7,10 * $HOME/Projects/aria-trading/research-reminder.sh >> $HOME/Projects/aria-trading/logs/research-reminder.log 2>&1
 CRON
 ) | crontab -
 ```
