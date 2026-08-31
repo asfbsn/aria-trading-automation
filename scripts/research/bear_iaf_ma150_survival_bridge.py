@@ -234,9 +234,9 @@ def main():
     )
     parser.add_argument(
         "--permutations",
-        type=int,
+        type=positive_int,
         default=10000,
-        help="Number of permutations for significance test (default: 10000)",
+        help="Number of permutations for significance test (default: 10000, must be > 0)",
     )
     args = parser.parse_args()
 

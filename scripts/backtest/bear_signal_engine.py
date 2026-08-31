@@ -100,7 +100,13 @@ class BearCallSpreadSignalEngine:
                 # above close, rounded up to nearest $5; width $10 wide.
                 short_strike = math.ceil(ma150 / 5.0) * 5.0
                 if short_strike <= close:
-                    short_strike = math.ceil((ma150 + 0.01) / 5.0) * 5.0
+                    # Recompute from max(ma150, close), not ma150 alone: both
+                    # wired tiers require below_ma150 (close < ma150) so this
+                    # branch is currently unreachable, but a future looser
+                    # tier (min_structural < 4) wouldn't guarantee that, and
+                    # ma150-only would still fall short of a close that's
+                    # above it. CodeRabbit finding.
+                    short_strike = math.ceil((max(ma150, close) + 0.01) / 5.0) * 5.0
                 long_strike = short_strike + self.width
 
                 # Expiry: next Friday on/after signal+TARGET_DTE (real chains
