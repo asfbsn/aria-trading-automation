@@ -94,6 +94,18 @@ else
     echo "[$RUN_TS] $TODAY is a US market holiday. Skip." >>"$ERR_FILE"
     exit 0
   fi
+  # This box's cron (classic Debian/Ubuntu 3.0pl1) silently ignores CRON_TZ —
+  # confirmed via syslog 2026-08-31: a "CRON_TZ=America/New_York, 0 9" entry
+  # fired at 09:00 system-local (Asia/Jerusalem) time, 7h early, not 09:00 ET.
+  # Fix: crontab fires this on a wide Israel-local window every 15min (see
+  # crontab comment); this check gates the real work to the true NY-local
+  # pre-open window regardless of DST state on either side.
+  # 10#$(...) forces base-10 parsing — "0900" as a bare int is invalid octal.
+  NY_HHMM=$((10#$(TZ='America/New_York' date +%H%M)))
+  if [ "$NY_HHMM" -lt 900 ] || [ "$NY_HHMM" -ge 915 ]; then
+    echo "[$RUN_TS] Outside 09:00-09:14 America/New_York (NY time now: $NY_HHMM) — skip." >>"$ERR_FILE"
+    exit 0
+  fi
 fi
 
 cd "$CLAUDE_PROJECT_DIR"

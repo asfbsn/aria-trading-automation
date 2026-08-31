@@ -121,15 +121,21 @@ CRON_TZ=Asia/Jerusalem
 0  19 * * 1-5 $HOME/Projects/aria-trading/daily-scan.sh >> $HOME/Projects/aria-trading/logs/cron.log 2>&1
 45 19 * * 1-5 $HOME/Projects/aria-trading/watchdog.sh   >> $HOME/Projects/aria-trading/logs/watchdog.log 2>&1
 
-# Pre-open guards, anchored to America/New_York (NOT a fixed Israel local time —
-# 16:00 Israel is only ~9:00 ET when both countries' DST happen to align; during
-# the ~2-3 weeks/year Israel/US DST transitions don't coincide it drifts to
-# ~10:00 ET, after the open, defeating exit-guard's premarket check and delaying
-# gtc-guard past 9:30 ET. Anchoring the cron zone itself to America/New_York
-# keeps this correct year-round with no manual DST bookkeeping):
-CRON_TZ=America/New_York
-0 9 * * 1-5 $HOME/Projects/aria-trading/gtc-guard.sh  >> $HOME/Projects/aria-trading/logs/gtc-guard.log 2>&1
-0 9 * * 1-5 $HOME/Projects/aria-trading/exit-guard.sh >> $HOME/Projects/aria-trading/logs/exit-guard.log 2>&1
+# Pre-open guards, target 09:00-09:14 America/New_York. CRON_TZ does NOT work
+# on this box's cron (classic Debian/Ubuntu 3.0pl1 -- confirmed via syslog
+# 2026-08-31: a "CRON_TZ=America/New_York, 0 9" entry fired at 09:00
+# Israel-local, 7h early, not 09:00 ET -- CRON_TZ is silently accepted as an
+# inert env var, never used to reinterpret the schedule fields). Fix: fire
+# every 15min across the full Israel-local range "09:00 ET" can fall in
+# across the year (15:00-17:14 IDT/IST, wider during the ~2-4wk/year
+# Israel/US DST transition dates don't coincide); gtc-guard.sh/exit-guard.sh
+# each have their own internal NY-time check (TZ='America/New_York' date)
+# that skips-and-exits-0 outside the real window, so only one of these ~20
+# firings/day per script actually runs -- the rest are a no-op exit, no
+# Claude/API cost:
+CRON_TZ=Asia/Jerusalem
+*/15 14-18 * * 1-5 $HOME/Projects/aria-trading/gtc-guard.sh  >> $HOME/Projects/aria-trading/logs/gtc-guard.log 2>&1
+*/15 14-18 * * 1-5 $HOME/Projects/aria-trading/exit-guard.sh >> $HOME/Projects/aria-trading/logs/exit-guard.log 2>&1
 
 # Quarterly nudge to re-run the entry-gate research tool (docs/research-methodology.md).
 # Sends a reminder only -- never runs the analysis unattended.
