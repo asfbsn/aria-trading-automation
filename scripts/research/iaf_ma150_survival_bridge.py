@@ -171,8 +171,14 @@ def run_permutation_test(
     sim_k_b = total_k - sim_k_a
     sim_diffs = (sim_k_a / n_a) - (sim_k_b / n_b)
 
-    p_two = float(np.mean(np.abs(sim_diffs) >= np.abs(diff_obs)))
-    p_one = float(np.mean(sim_diffs >= diff_obs)) if diff_obs >= 0 else float(np.mean(sim_diffs <= diff_obs))
+    # Add-one (Davison & Hinkley) correction: a finite Monte Carlo estimate
+    # can never truthfully claim p=0.0 -- if the observed difference is more
+    # extreme than every single simulated draw, the honest bound is 1/(N+1),
+    # not 0. CodeRabbit finding, 2026-08-31.
+    extreme_two = int(np.sum(np.abs(sim_diffs) >= np.abs(diff_obs)))
+    extreme_one = int(np.sum(sim_diffs >= diff_obs)) if diff_obs >= 0 else int(np.sum(sim_diffs <= diff_obs))
+    p_two = (extreme_two + 1) / (n_permutations + 1)
+    p_one = (extreme_one + 1) / (n_permutations + 1)
 
     return p_two, p_one, diff_obs, rate_a, rate_b
 

@@ -21,7 +21,10 @@ global/system-wide `pip install` of a research framework's dependency tree
 this machine by PEP 668 (`externally-managed-environment`) — the isolated
 venv is both the safe path and the only path that doesn't fight the OS.
 
-**To recreate it** (e.g. on a new machine, or after it's been deleted):
+**To recreate it** (e.g. on a new machine, or after it's been deleted).
+Requires **Python >=3.10** — `investing-algorithm-framework==8.10.0` pins
+that as its minimum (check with `python3 --version` first if recreating on
+an unfamiliar machine; this environment ran 3.14.4):
 
 ```bash
 python3 -m venv ~/venvs/trading-eval

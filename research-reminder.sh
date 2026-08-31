@@ -32,7 +32,11 @@ send_telegram() {
   if [ -z "$tok" ] || [ -z "$chat" ]; then
     echo "[$RUN_TS] Telegram not configured; skipping." >>"$ERR_FILE"; return 0
   fi
-  curl -s -m 30 "https://api.telegram.org/bot${tok}/sendMessage" \
+  # Token via -K/process-substitution, not a literal argv URL: a bare
+  # "bot<TOKEN>/sendMessage" URL as a curl argument is visible to any other
+  # local user via `ps`/`/proc/<pid>/cmdline` for curl's runtime.
+  # CodeRabbit finding, 2026-08-31.
+  curl -s -m 30 -K <(printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$tok") \
     --data-urlencode "chat_id=${chat}" \
     --data-urlencode "text=${msg}" >/dev/null 2>>"$ERR_FILE" || true
 }
