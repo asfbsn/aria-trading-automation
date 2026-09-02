@@ -136,7 +136,16 @@ def run_tier(tier_name: str, engine: BullPutSpreadSignalEngine, loader: YFLoader
 
 def extract_tier_spreads(trades_csv_path: Path) -> pd.DataFrame:
     """Extracts spread-level metrics from a tier's trades.csv."""
+    cols = [
+        "code", "entry_date", "width", "short_strike", "long_strike",
+        "credit", "max_loss_per_contract", "spread_pnl",
+    ]
+    if not trades_csv_path.exists() or trades_csv_path.stat().st_size == 0:
+        return pd.DataFrame(columns=cols)
+
     trades = pd.read_csv(trades_csv_path)
+    if trades.empty:
+        return pd.DataFrame(columns=cols)
 
     # Spread-level P&L (1-contract)
     closes = trades[trades["side"].isin(["expire", "exercise", "early_exercise"])]

@@ -149,6 +149,7 @@ def extract_tier_spreads(trades_csv_path: Path) -> pd.DataFrame:
         "credit",
         "max_loss_per_contract",
         "spread_pnl",
+        "actual_close_date",
     ]
     if not trades_csv_path.exists() or trades_csv_path.stat().st_size == 0:
         return pd.DataFrame(columns=cols)
@@ -157,16 +158,19 @@ def extract_tier_spreads(trades_csv_path: Path) -> pd.DataFrame:
     if trades.empty:
         return pd.DataFrame(columns=cols)
 
-    # Spread-level P&L (1-contract)
+    # Spread-level P&L (1-contract). Also capture the ACTUAL close date (not
+    # the planned expiry) — early_exercise can close a position before its
+    # expiry, and using planned expiry for capacity release would hold that
+    # capital reserved longer than it really was, understating capacity for
+    # later signals (CodeRabbit finding, 2026-09-02).
     closes = trades[trades["side"].isin(["expire", "exercise", "early_exercise"])]
     if closes.empty:
         return pd.DataFrame(columns=cols)
 
     pnl_df = (
-        closes.groupby(["code", "entry_date"])["pnl"]
-        .sum()
+        closes.groupby(["code", "entry_date"])
+        .agg(spread_pnl=("pnl", "sum"), actual_close_date=("timestamp", "max"))
         .reset_index()
-        .rename(columns={"pnl": "spread_pnl"})
     )
 
     # Leg info from opening trades
@@ -317,6 +321,7 @@ def main():
             "credit": "credit_2_5",
             "max_loss_per_contract": "max_loss_2_5",
             "spread_pnl": "spread_pnl_2_5",
+            "actual_close_date": "actual_close_date_2_5",
         }
     )
     df_1 = tier_dfs["width_1_0"].rename(
@@ -327,6 +332,7 @@ def main():
             "credit": "credit_1",
             "max_loss_per_contract": "max_loss_1",
             "spread_pnl": "spread_pnl_1",
+            "actual_close_date": "actual_close_date_1",
         }
     )
 
@@ -341,28 +347,40 @@ def main():
         selected_credit = None
         selected_pnl = None
 
+        selected_close_date = None
         if test_tradeable_candidate(row.get("max_loss_2_5"), row.get("credit_2_5")):
             selected_width = 2.5
             selected_max_loss = float(row["max_loss_2_5"])
             selected_credit = float(row["credit_2_5"])
             selected_pnl = float(row["spread_pnl_2_5"])
+            selected_close_date = row.get("actual_close_date_2_5")
         elif test_tradeable_candidate(row.get("max_loss_1"), row.get("credit_1")):
             selected_width = 1.0
             selected_max_loss = float(row["max_loss_1"])
             selected_credit = float(row["credit_1"])
             selected_pnl = float(row["spread_pnl_1"])
+            selected_close_date = row.get("actual_close_date_1")
 
         if selected_width is not None:
             width_counts[selected_width] += 1
             contracts = math.floor(300.0 / selected_max_loss)
             scaled_pnl = selected_pnl * contracts
 
-            exit_date = expiry_map.get((row["code"], row["entry_date"]))
-            if exit_date is None:
-                entry_ts = pd.to_datetime(row["entry_date"])
-                exp_ts = entry_ts + pd.Timedelta(days=30)
-                exp_ts += pd.Timedelta(days=(4 - exp_ts.weekday()) % 7)
-                exit_date = str(exp_ts.date())
+            # Prefer the ACTUAL close date (early_exercise can close before
+            # planned expiry); only fall back to planned expiry / a computed
+            # approximation when the actual close date is unavailable
+            # (CodeRabbit finding, 2026-09-02 -- using planned expiry alone
+            # over-reserves capacity and can wrongly capacity_block later
+            # signals).
+            if pd.notna(selected_close_date):
+                exit_date = selected_close_date
+            else:
+                exit_date = expiry_map.get((row["code"], row["entry_date"]))
+                if exit_date is None:
+                    entry_ts = pd.to_datetime(row["entry_date"])
+                    exp_ts = entry_ts + pd.Timedelta(days=30)
+                    exp_ts += pd.Timedelta(days=(4 - exp_ts.weekday()) % 7)
+                    exit_date = str(exp_ts.date())
 
             tradeable_rows.append(
                 {
