@@ -13,5 +13,8 @@ priority-today.md
 scripts/backtest/.venv/
 scripts/backtest/run_out/
 scripts/backtest/run_out_bear/
+scripts/backtest/run_out_full_universe/
+scripts/backtest/run_out_full_universe_narrow/
+scripts/backtest/run_out_smallcap_narrow/
 scripts/backtest/__pycache__/
 scripts/__pycache__/
