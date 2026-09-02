@@ -50,13 +50,15 @@ option-chain/pricing data is always IBKR, never yfinance.
    insider-selling cluster: 3+ distinct insiders in a 30-day window over 90 days)
    hard-rejects. One scan-start macro check (VIX / SPY-vs-MA150 / scheduled events)
    heads the report as Market Context.
-5. **Emit a trade directive** per final PRIME name: exact strikes/expiry, entry
-   limit credit + minimum (1:2.5 floor), EXECUTE-NOW-vs-HOLD trigger from the
-   provisional bar (must confirm at support with volume), position size at
-   6.25% of net-liq max loss (0 contracts ⇒ BLOCKED), 8-position cap + sector
-   diversification guards on validated leg pairs, and mandatory exits: GTC
-   buy-to-close at 20% of credit (80% capture), stop below short strike/MA150,
-   DTE≤7 time stop. Advisory only — a human places every order.
+5. **Emit a trade directive** per final PRIME name: exact strikes/expiry (a
+   dynamic, chain-driven width — see Position & exit rules below, not a fixed
+   $10), entry limit credit + minimum (1:2.5 floor), EXECUTE-NOW-vs-HOLD trigger
+   from the provisional bar (must confirm at support with volume), position size
+   at 10% of net-liq max loss with narrower-width fallback (0 contracts at every
+   tested width ⇒ BLOCKED), 5-position cap + sector diversification guards on
+   validated leg pairs, and mandatory exits: GTC buy-to-close at 20% of credit
+   (80% capture), stop below short strike/MA150, DTE≤7 time stop. Advisory only
+   — a human places every order.
 6. **Report** into two clearly separated tables:
    - 🟢 **PRIME** — `entry_confirmed: true` + strong structure + verified
      1:1.5–2.5 R/R + clean research gate (the only execution-ready names).
@@ -192,10 +194,17 @@ reject if strike intervals can't fit R/R with the short below support; check eve
 two-table PRIME/RADAR output plus per-PRIME trade directives; strict scope
 (`data/universe.csv` constituents only, prescreen-shortlisted).
 
-**Position & exit rules (set 2026-08-26):** max loss per spread = **6.25% of net
-liquidation value** (contracts = floor(6.25% × net_liq / (width−credit) × 100); 0
-⇒ BLOCKED, never a 0-contract order); **max 8 concurrent spreads** (≈50% total
-portfolio risk) with **strict sector diversification** (one spread per sector);
+**Position & exit rules (updated 2026-09-02):** spread width is now **dynamic,
+derived from each name's actual live chain spacing** (S, 2S, 4S — never a fixed
+$10; many higher-priced/wide-interval names like JBHT/APD only ever list $10
+apart, others list $1–2.50) — the widest width that clears both the liquidity
+gate and the 1:1.5–2.5 R/R band is preferred, with narrower widths kept as
+fallbacks for accounts too small to size the widest one. Max loss per spread =
+**10% of net liquidation value** (contracts = floor(10% × net_liq /
+(width−credit) × 100); retries narrower fallback widths before giving up; 0 ⇒
+BLOCKED, never a 0-contract order); **max 5 concurrent spreads** (10% × 5 = same
+**50% total portfolio risk** ceiling as before — only the per-trade/count split
+changed) with **strict sector diversification** (one spread per sector);
 default exit = **GTC buy-to-close at 20% of received credit (80% capture)**, plus
 stop on a close below the short strike or MA150 and a DTE≤7 time stop — the same
 thresholds `exit-guard.sh` monitors.

@@ -156,10 +156,13 @@ output from IBKR bars — that's the authoritative signal source for finalists.
    but NEVER above MA-150. Stop at first (deepest) passing strike. (See
    R/R VERIFICATION for full tiered mechanics).
 3. R/R target 1:2 (~1/3 of width as credit). Acceptable band **1:1.5 → 1:2.5**.
-   On a $10-wide: credit $4.00 (1:1.5) … $2.86 (1:2.5). Reject worse than 1:2.5.
-4. Strike-interval aware: if wide gaps (e.g. APD's $10) prevent hitting 1:1.5–2.5
-   at primary depth, step up through the flexibility tier (up to MA-150). REJECT
-   only if no available interval width at any tier clears the 1:1.5–2.5 band.
+   Same ratio at any width: $10-wide needs credit $4.00 (1:1.5) … $2.86 (1:2.5);
+   $2.50-wide needs $1.00 … $0.71; $1-wide needs $0.40 … $0.29. Reject worse than 1:2.5.
+4. Strike-interval AND width aware (see R/R VERIFICATION's width search): if wide
+   gaps (e.g. JBHT/APD only list $10 strikes near the money) prevent hitting
+   1:1.5–2.5 at primary depth even after testing every listed width, step up
+   through the flexibility tier (up to MA-150). REJECT only if no width/depth
+   combo at any tier clears the 1:1.5–2.5 band.
 5. Read every check in `checks` object, not just `entry_confirmed`:
    `above_ma150`, `rsi_below_50`, `rsi_rising`, `near_ma50_pullback`,
    `near_ma150_support`, `volume_above_avg`, `bullish_candle` (+ `candle_pattern`
@@ -229,18 +232,41 @@ tools:
      were liquid but none cleared R/R, use the existing R/R-gate reject
      reason below instead — name the actual blocking condition, don't
      default to blaming liquidity if R/R was the real blocker).
-7. Compute: **credit = short_mid − long_mid**; **max loss = width − credit**; **R/R = maxloss : credit**.
+7. **Width search (dynamic, chain-driven — never assume a fixed width).** At
+   whichever short-strike depth is currently being tested (Tier 1 or Tier 2
+   below), read the actual strike spacing (S) from step 4's `get_option_data`
+   result around that strike — this is a real per-name, per-expiry market fact,
+   not a script setting: a $17 stock may list S=$1, an $85 stock S=$2.50, and a
+   name like JBHT/APD only $10 apart even close to the money (confirmed live
+   2026-09-02: JBHT Oct'26 chain near $263 spot lists strikes at 230/240/250/260
+   — no $1/$2.50/$5 increments exist there at all; that's the chain, not a
+   choice). Test every long-put strike below the short strike that's actually
+   listed, which typically yields candidate widths **S, 2S, and 4S** (skip any
+   not actually present on the chain). For each width, compute credit/max-loss/
+   R-R (step 8) and the liquidity gate (step 6) on both legs. State which S you
+   identified and which widths you tested.
+   - **Width selection rule:** among the widths that clear BOTH the liquidity
+     gate and the R/R band at this depth, the PRIMARY pick is the WIDEST one —
+     it carries a larger credit cushion against the fixed $0.30 bid-ask gate and
+     the ~$2–3 round-trip commission per spread (both are a much bigger bite out
+     of a $1-wide's credit than a $10-wide's). Record every narrower width that
+     also cleared as a FALLBACK, ordered narrowest-first — TRADE DIRECTIVE sizing
+     may need one of these if the primary width doesn't fit the account's
+     per-trade budget (see HOW MUCH). A width that clears the gates but is
+     dropped only because a wider one also cleared is not a rejection — keep its
+     numbers on hand for the fallback.
+8. Compute: **credit = short_mid − long_mid**; **max loss = width − credit**; **R/R = maxloss : credit**.
    Apply the **tiered strike search (deepest-safest first)**, testing the
-   liquidity gate (step 6) on each candidate pair alongside its R/R check —
-   a pair must clear BOTH to be eligible:
-   - **Tier 1 (Primary target):** Short strike placed a few percentage points below MA-150, OR below the recent local swing low (lowest wicks of recent daily candles) — whichever gives more room. Test if R/R hits **1:1.5–2.5** (credit ≈ width/3.5 … width/2.5).
-   - **Tier 2 (Flexibility tier):** If Tier 1 cannot hit R/R 1.5–2.5 at available strike intervals, walk the short strike up — as far as sitting AT the MA-150 line itself, or the lower edge of a genuine multi-day consolidation/basing zone — but **NEVER above MA-150** (absolute hard ceiling).
-   - **Selection rule:** Walk the strike up from the primary target only as far as strictly necessary to clear 1.5–2.5 AND the liquidity gate, and stop at the first (deepest/safest) strike that clears both. Do not pick a shallower strike if a deeper one works.
+   liquidity gate (step 6) and width search (step 7) together on each candidate
+   depth — at least one width at that depth must clear BOTH to be eligible:
+   - **Tier 1 (Primary target):** Short strike placed a few percentage points below MA-150, OR below the recent local swing low (lowest wicks of recent daily candles) — whichever gives more room. Test if any tested width hits R/R **1:1.5–2.5** (credit ≈ width/3.5 … width/2.5).
+   - **Tier 2 (Flexibility tier):** If no width at Tier 1 can hit R/R 1.5–2.5, walk the short strike up — as far as sitting AT the MA-150 line itself, or the lower edge of a genuine multi-day consolidation/basing zone — but **NEVER above MA-150** (absolute hard ceiling).
+   - **Selection rule:** Walk the strike up from the primary target only as far as strictly necessary to clear 1.5–2.5 AND the liquidity gate (at any tested width), and stop at the first (deepest/safest) strike that clears both. Do not pick a shallower strike if a deeper one works.
 - If no strike/width combo across either tier satisfies 1:1.5–2.5 with sufficient liquidity (even with short at MA-150) → the name is a **REJECT**, reason
   "R/R gate: cannot hit 1:1.5–2.5 even at MA-150 flexibility tier" (e.g. the APD/AMZN case where wide strike intervals prevent compliant credit even at the MA-150 ceiling) — do
   NOT list it as PRIME and NEVER place short strike above MA-150.
 - **REJECT always wins over RADAR:** a name with no compliant liquid spread (this step) never becomes RADAR via an IV_LOW or research-gate flag below — those downgrades only ever apply to a name that already has a valid, priced, liquid, R/R-compliant spread. A name with no compliant spread has nothing to price for Table 2 and stays REJECT, full stop.
-- For every PRIME row, report the **verified exact strikes, credit, max loss, max profit, and R/R**.
+- For every PRIME row, report the **verified exact strikes, credit, max loss, max profit, and R/R for the PRIMARY width**; list any FALLBACK widths compactly (one line each: strikes, credit, max loss, R/R).
 - NEVER use order tools (`create_order_instruction`); read-only only.
 
 ## 🔎 QUALITATIVE RESEARCH GATE — PRIME-eligible only
@@ -289,12 +315,15 @@ pages) to perform four checks:
 ## 📋 TRADE DIRECTIVE — final PRIME names only
 For each name that survived ALL gates (technical rules + R/R verification + research gate), emit one EXECUTION PLAN block containing, in order:
 
-- **WHAT:** ticker, exact short/long put strikes, expiration date (the ~30 DTE expiry already chosen in R/R VERIFICATION — do not re-pick).
+- **WHAT:** ticker, exact short/long put strikes, expiration date (the ~30 DTE expiry already chosen in R/R VERIFICATION — do not re-pick), and which width is being used (PRIMARY, or a FALLBACK — see HOW MUCH).
 - **WHEN (execution-window rule):** this scan runs inside the 12:00–13:00 ET execution window (19:00–20:00 Israel). Directive = `EXECUTE NOW` **only if** the PROVISIONAL pass (unsettled bar, no `--exclude-last-bar`) shows ALL THREE of: `above_ma150`, `near_ma150_support`, `volume_above_avg` — i.e. today's live bar is confirming the settled signal at support with real volume, not fighting it. If any of the three is false on the provisional read → directive = `HOLD — provisional bar not confirming; re-evaluate next scan` (name which check failed). This gates EXECUTION TIMING only — PRIME classification itself stays based on the SETTLED read, per the existing Timing section.
-- **AT WHAT PRICE:** entry limit credit = the verified mid credit from R/R VERIFICATION (state $); minimum acceptable credit = width/3.5 (the 1:2.5 floor, state $) — if fills would require accepting less, do not chase, skip the trade.
+- **AT WHAT PRICE:** entry limit credit = the verified mid credit from R/R VERIFICATION **for the width actually selected for sizing** (state $ — re-state it if a FALLBACK width ended up used instead of PRIMARY); minimum acceptable credit = that width/3.5 (the 1:2.5 floor, state $) — if fills would require accepting less, do not chase, skip the trade.
 - **R/R restated:** print max loss ÷ credit; hard rule: if outside 1.5–2.5, NO directive is emitted for the name (even if it somehow reached this section) — it reverts to REJECT with reason "R/R outside 1.5–2.5 at directive stage".
-- **Portfolio guards (check BEFORE sizing):** call `get_account_positions` (read-only). Count currently-open bull-put-spread positions — a position counts ONLY as a validated leg pair: same underlying, same expiration, both PUTS, offsetting quantities (short leg negative, long leg positive, equal magnitude), and short strike ABOVE long strike; unpaired or ambiguous option legs are NOT counted as spreads but must be flagged in the report as "unpaired legs — verify manually". If validated pairs ≥ 8 → `BLOCKED — 8-position cap reached`. If any open position's underlying is in the SAME sector as this candidate (sector column from `data/universe.csv`) → `BLOCKED — sector correlation with <existing ticker>`. Blocked names remain listed as PRIME in Table 1 (signal is real) but their directive block states the BLOCKED status instead of an executable order.
-- **HOW MUCH (position sizing):** call `get_account_summary` (read-only) for current net liquidation value. `contracts = floor( (0.0625 × net_liq) / (max_loss_per_contract × 100) )` where `max_loss_per_contract = width − credit` (per share). Show the arithmetic inline (net_liq, allocation $ = 6.25% of it, per-contract max loss $, resulting integer). **If the result is 0 → directive = `BLOCKED — spread too wide for current account equity`; never emit a 0-contract order.**
+- **Portfolio guards (check BEFORE sizing):** call `get_account_positions` (read-only). Count currently-open bull-put-spread positions — a position counts ONLY as a validated leg pair: same underlying, same expiration, both PUTS, offsetting quantities (short leg negative, long leg positive, equal magnitude), and short strike ABOVE long strike; unpaired or ambiguous option legs are NOT counted as spreads but must be flagged in the report as "unpaired legs — verify manually". If validated pairs ≥ 5 → `BLOCKED — 5-position cap reached`. If any open position's underlying is in the SAME sector as this candidate (sector column from `data/universe.csv`) → `BLOCKED — sector correlation with <existing ticker>`. Blocked names remain listed as PRIME in Table 1 (signal is real) but their directive block states the BLOCKED status instead of an executable order.
+- **HOW MUCH (position sizing, set 2026-09-02):** call `get_account_summary` (read-only) for current net liquidation value. `contracts = floor( (0.10 × net_liq) / (max_loss_per_contract × 100) )` where `max_loss_per_contract = width − credit` (per share, for the width being tried) — use the **minimum acceptable credit (width/3.5, the same floor stated in AT WHAT PRICE)** for this `credit`, not the verified mid. The entry order may fill anywhere from mid down to that floor; sizing off mid would understate max_loss (and oversize the position) if the actual fill lands at the floor. 10% per trade × the 5-position cap above = the same **50% total portfolio risk ceiling** as before — only the per-trade/position-count split changed, not the total.
+  - Try the PRIMARY (widest-clearing) width first. Show the arithmetic inline (net_liq, allocation $ = 10% of it, per-contract max loss $, resulting integer).
+  - **If the result is 0, retry with each FALLBACK width from R/R VERIFICATION, narrowest first** (smaller max_loss_per_contract fits a small allocation more easily) — re-show the arithmetic for the width that actually sizes to ≥1 contract, and update WHAT/AT WHAT PRICE above to match that width, not the primary one.
+  - **Only if EVERY tested width (primary + all fallbacks) still sizes to 0 → directive = `BLOCKED — spread too wide for current account equity even at narrowest available width`; never emit a 0-contract order.**
 - **Macro context note:** if a major scheduled macro event (from the scan-start Market Context check) falls inside the ~30 DTE window, note it here for context (does not gate execution).
 - **EXITS (mandatory in every executable block):**
   - Profit-take: place GTC buy-to-close at **20% of received credit** (captures 80% of max profit; state the $ price). Note: this 80%-capture target is the default baseline GTC order; exits remain dynamically manageable by the exit guard / discretion on momentum and market conditions.
