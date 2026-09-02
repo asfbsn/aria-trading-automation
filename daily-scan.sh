@@ -89,9 +89,9 @@ CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-4-8}"
 # capability added.
 #
 # get_account_summary + get_account_positions: read-only account data for
-# trade-directive sizing (10% net-liq rule, set 2026-09-02, dynamic chain-driven
-# width) and portfolio guards (5-position cap, sector diversification); still
-# zero order-placement capability.
+# trade-directive sizing (25% net-liq rule, "High-Conviction / Velocity" model,
+# updated 2026-09-02, dynamic chain-driven width) and portfolio guards
+# (2-position cap, sector diversification); still zero order-placement capability.
 CLAUDE_ALLOWED_TOOLS_BASE="\
 Read(/${ARIA_HOME}/data/universe.csv),\
 Read(/${ARIA_HOME}/state/scratch/prescreen_*.json),\

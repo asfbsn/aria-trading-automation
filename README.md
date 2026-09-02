@@ -54,8 +54,8 @@ option-chain/pricing data is always IBKR, never yfinance.
    dynamic, chain-driven width — see Position & exit rules below, not a fixed
    $10), entry limit credit + minimum (1:2.5 floor), EXECUTE-NOW-vs-HOLD trigger
    from the provisional bar (must confirm at support with volume), position size
-   at 10% of net-liq max loss with narrower-width fallback (0 contracts at every
-   tested width ⇒ BLOCKED), 5-position cap + sector diversification guards on
+   at 25% of net-liq max loss with narrower-width fallback (0 contracts at every
+   tested width ⇒ BLOCKED), 2-position cap + sector diversification guards on
    validated leg pairs, and mandatory exits: GTC buy-to-close at 20% of credit
    (80% capture), stop below short strike/MA150, DTE≤7 time stop. Advisory only
    — a human places every order.
@@ -194,17 +194,19 @@ reject if strike intervals can't fit R/R with the short below support; check eve
 two-table PRIME/RADAR output plus per-PRIME trade directives; strict scope
 (`data/universe.csv` constituents only, prescreen-shortlisted).
 
-**Position & exit rules (updated 2026-09-02):** spread width is now **dynamic,
-derived from each name's actual live chain spacing** (S, 2S, 4S — never a fixed
-$10; many higher-priced/wide-interval names like JBHT/APD only ever list $10
-apart, others list $1–2.50) — the widest width that clears both the liquidity
-gate and the 1:1.5–2.5 R/R band is preferred, with narrower widths kept as
-fallbacks for accounts too small to size the widest one. Max loss per spread =
-**10% of net liquidation value** (contracts = floor(10% × net_liq /
-(width−credit) × 100); retries narrower fallback widths before giving up; 0 ⇒
-BLOCKED, never a 0-contract order); **max 5 concurrent spreads** (10% × 5 = same
-**50% total portfolio risk** ceiling as before — only the per-trade/count split
-changed) with **strict sector diversification** (one spread per sector);
+**Position & exit rules (updated 2026-09-02, "High-Conviction / Velocity" model):**
+spread width is **dynamic, derived from each name's actual live chain spacing**
+(S, 2S, 4S — never a fixed $10; many higher-priced/wide-interval names like
+JBHT/APD only ever list $10 apart, others list $1–2.50) — the widest width that
+clears both the liquidity gate and the 1:1.5–2.5 R/R band is preferred, with
+narrower widths kept as fallbacks. Max loss per spread = **25% of net
+liquidation value** (contracts = floor((25% × net_liq) / ((width−credit) × 100));
+retries narrower fallback widths before giving up; 0 ⇒ BLOCKED, never a
+0-contract order); **max 2 concurrent spreads** (25% × 2 = same **50% total
+portfolio risk** ceiling as the prior 10%/5-position split, just far more
+concentrated per position — see the Trade Directive's tail-risk note: a single
+max-loss event is now −25% of the account, two correlated breaches −50%) with
+**strict sector diversification** (one spread per sector);
 default exit = **GTC buy-to-close at 20% of received credit (80% capture)**, plus
 stop on a close below the short strike or MA150 and a DTE≤7 time stop — the same
 thresholds `exit-guard.sh` monitors.
