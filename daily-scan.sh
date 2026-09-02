@@ -89,9 +89,12 @@ CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-4-8}"
 # capability added.
 #
 # get_account_summary + get_account_positions: read-only account data for
-# trade-directive sizing (25% net-liq rule, "High-Conviction / Velocity" model,
-# updated 2026-09-02, dynamic chain-driven width) and portfolio guards
-# (2-position cap, sector diversification); still zero order-placement capability.
+# trade-directive sizing ("Global Heap" dynamic allocator model, updated
+# 2026-09-02: PRIME survivors ranked by R/R, allocated top-down against a
+# shared 50%-of-net-liq pool with per-trade blocks sized by spread geometry,
+# dynamic chain-driven width) and portfolio guards (sector diversification;
+# position count now floats by geometry instead of a fixed cap); still zero
+# order-placement capability.
 CLAUDE_ALLOWED_TOOLS_BASE="\
 Read(/${ARIA_HOME}/data/universe.csv),\
 Read(/${ARIA_HOME}/state/scratch/prescreen_*.json),\

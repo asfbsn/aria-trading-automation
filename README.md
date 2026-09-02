@@ -50,13 +50,17 @@ option-chain/pricing data is always IBKR, never yfinance.
    insider-selling cluster: 3+ distinct insiders in a 30-day window over 90 days)
    hard-rejects. One scan-start macro check (VIX / SPY-vs-MA150 / scheduled events)
    heads the report as Market Context.
-5. **Emit a trade directive** per final PRIME name: exact strikes/expiry (a
-   dynamic, chain-driven width — see Position & exit rules below, not a fixed
-   $10), entry limit credit + minimum (1:2.5 floor), EXECUTE-NOW-vs-HOLD trigger
-   from the provisional bar (must confirm at support with volume), position size
-   at 25% of net-liq max loss with narrower-width fallback (0 contracts at every
-   tested width ⇒ BLOCKED), 2-position cap + sector diversification guards on
-   validated leg pairs, and mandatory exits: GTC buy-to-close at 20% of credit
+5. **Rank + allocate, then emit a trade directive** per final PRIME name: the
+   scan's PRIME survivors are ranked by R/R (richest premium-per-risk first)
+   and walked top-down against a shared 50%-of-net-liq risk pool ("the Global
+   Heap" — see Position & exit rules below) until it's exhausted or names run
+   out, with a per-trade block size derived from each spread's own geometry
+   (~15–25% of net-liq, not a fixed % or position count). Each directive states
+   exact strikes/expiry (a dynamic, chain-driven width, not a fixed $10), entry
+   limit credit + minimum (1:2.5 floor), EXECUTE-NOW-vs-HOLD trigger from the
+   provisional bar (must confirm at support with volume), the allocator's sizing
+   arithmetic (0 fit at every tested width ⇒ `BLOCKED — heap exhausted`), sector
+   diversification guard, and mandatory exits: GTC buy-to-close at 20% of credit
    (80% capture), stop below short strike/MA150, DTE≤7 time stop. Advisory only
    — a human places every order.
 6. **Report** into two clearly separated tables:
@@ -194,18 +198,24 @@ reject if strike intervals can't fit R/R with the short below support; check eve
 two-table PRIME/RADAR output plus per-PRIME trade directives; strict scope
 (`data/universe.csv` constituents only, prescreen-shortlisted).
 
-**Position & exit rules (updated 2026-09-02, "High-Conviction / Velocity" model):**
-spread width is **dynamic, derived from each name's actual live chain spacing**
-(S, 2S, 4S — never a fixed $10; many higher-priced/wide-interval names like
-JBHT/APD only ever list $10 apart, others list $1–2.50) — the widest width that
-clears both the liquidity gate and the 1:1.5–2.5 R/R band is preferred, with
-narrower widths kept as fallbacks. Max loss per spread = **25% of net
-liquidation value** (contracts = floor((25% × net_liq) / ((width−credit) × 100));
-retries narrower fallback widths before giving up; 0 ⇒ BLOCKED, never a
-0-contract order); **max 2 concurrent spreads** (25% × 2 = same **50% total
-portfolio risk** ceiling as the prior 10%/5-position split, just far more
-concentrated per position — see the Trade Directive's tail-risk note: a single
-max-loss event is now −25% of the account, two correlated breaches −50%) with
+**Position & exit rules (updated 2026-09-02, "Global Heap" dynamic allocator
+model):** spread width is **dynamic, derived from each name's actual live
+chain spacing** (S, 2S, 4S — never a fixed $10; many higher-priced/wide-interval
+names like JBHT/APD only ever list $10 apart, others list $1–2.50) — the
+widest width that clears both the liquidity gate and the 1:1.5–2.5 R/R band
+is preferred, with narrower widths kept as fallbacks. Sizing replaces the
+prior fixed 25%/2-position split with a **shared 50%-of-net-liq risk pool**
+("the Heap" — same total ceiling as every model this session): this scan's
+PRIME survivors are ranked by R/R (richest credit-per-risk first) and
+allocated top-down, each name's block sized by its own spread geometry
+(`contracts = floor(min(0.25×net_liq, heap_remaining) / max_loss_per_contract)`
+— the 25%-of-net_liq figure is a per-trade ceiling, not a fixed allocation,
+so it never lets one name swallow the whole heap) until the heap is exhausted
+or candidates run out (0 fit at every tested width ⇒ `BLOCKED — heap
+exhausted`); position count now floats by geometry (typically 2–5) instead
+of a fixed cap — see the Trade Directive's tail-risk note: total worst case
+is unchanged at 50%, single-name worst case is bounded at ~25%, two
+correlated breaches still costs up to 50% in one stroke — with
 **strict sector diversification** (one spread per sector);
 default exit = **GTC buy-to-close at 20% of received credit (80% capture)**, plus
 stop on a close below the short strike or MA150 and a DTE≤7 time stop — the same
