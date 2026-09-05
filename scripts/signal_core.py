@@ -383,15 +383,18 @@ def exit_checks(closes, bars, short_strike, rsis=None):
     checks["bearish_candle"] = pattern != "none"
     checks["candle_pattern"] = pattern
 
-    # thesis_invalidated is the hard-CLOSE gate: short strike breach only.
-    # MA150 breach used to count here too, but a 2026-09-05 exit-rule backtest
-    # (750-ticker + 36-ticker, both universes) found it net-destructive as a
-    # deterministic stop: the short strike is chosen below MA150 on every
-    # valid entry, so a normal pullback crosses MA150 first and forces a
-    # panic-priced exit before the actual support level is even tested.
-    # broke_ma150_support is still surfaced in `checks` -- the exit-guard
-    # prompt now uses it for a RECOMMEND EXIT (judgment) escalation instead.
-    thesis_invalidated = checks["short_strike_breached"]
+    # thesis_invalidated is the hard-CLOSE gate: short strike breach OR MA150
+    # breach. MA150 was briefly demoted to advisory-only earlier on 2026-09-05
+    # after a 750-ticker-only backtest found it net-destructive as a
+    # deterministic stop on that universe. Reinstated as a hard stop the same
+    # day after a $3k Global-Heap-Allocator backtest on the expanded
+    # 1,591-ticker universe (750 mega-cap + 841 mid/small-cap, the universe
+    # now live) showed uniform MA150-everywhere beating strike-only by 5.7x
+    # monthly P&L ($71.11/mo vs -$18.72/mo) -- including on the mega-cap
+    # subset alone, contradicting the earlier single-universe result. Shipped
+    # for forward-testing; the contradiction is deliberately left unresolved
+    # by further backtesting -- live data decides it, not another simulation.
+    thesis_invalidated = checks["short_strike_breached"] or checks["broke_ma150_support"]
     return checks, thesis_invalidated
 
 
