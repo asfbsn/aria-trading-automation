@@ -127,7 +127,15 @@ if [ "${CLAUDE_EC:-1}" = "0" ] && grep -q '^ORDERS_CHECKED:' "$LOG_FILE"; then
     BODY="$BODY
 ⚠️ TRUNCATED — full list in $LOG_FILE, review it before the open."
   fi
-  if send_telegram "$(printf '⏰ %s\n\n%s' "$TODAY" "$BODY")"; then
+  # Stale REPLACED/STATUS-UNCLEAR order sitting >1 day (prompt step 6) gets a
+  # distinct message-level banner too, not just a body line — the 2026-08-25
+  # CDNS incident and the week-long INTC order both went unactioned inside the
+  # routine ⏰ report, so the escalation must be visible before the body is read.
+  HEADER_EMOJI="⏰"
+  if grep -q "ACTION REQUIRED" "$LOG_FILE"; then
+    HEADER_EMOJI="🚨🚨🚨"
+  fi
+  if send_telegram "$(printf '%s %s\n\n%s' "$HEADER_EMOJI" "$TODAY" "$BODY")"; then
     notify "GTC Guard sent" "$TODAY"
     echo "[$RUN_TS] Done → $LOG_FILE" >>"$ERR_FILE"
     exit 0

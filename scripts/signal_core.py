@@ -383,9 +383,15 @@ def exit_checks(closes, bars, short_strike, rsis=None):
     checks["bearish_candle"] = pattern != "none"
     checks["candle_pattern"] = pattern
 
-    # Thesis invalidated = either hard technical break. RSI/candle are
-    # discretionary WATCH signals only, never force a close on their own.
-    thesis_invalidated = checks["short_strike_breached"] or checks["broke_ma150_support"]
+    # thesis_invalidated is the hard-CLOSE gate: short strike breach only.
+    # MA150 breach used to count here too, but a 2026-09-05 exit-rule backtest
+    # (750-ticker + 36-ticker, both universes) found it net-destructive as a
+    # deterministic stop: the short strike is chosen below MA150 on every
+    # valid entry, so a normal pullback crosses MA150 first and forces a
+    # panic-priced exit before the actual support level is even tested.
+    # broke_ma150_support is still surfaced in `checks` -- the exit-guard
+    # prompt now uses it for a RECOMMEND EXIT (judgment) escalation instead.
+    thesis_invalidated = checks["short_strike_breached"]
     return checks, thesis_invalidated
 
 
