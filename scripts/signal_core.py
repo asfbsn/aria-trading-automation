@@ -12,10 +12,31 @@ Rule (mirrors prompts/bull-put-spread.md):
      2026-08-24 from the live TradingView screener panel; replaces the earlier
      "within 2% of nearest MA" placeholder, which was an undisclosed-band guess)
   4. volume > 20-bar volume MA
-  5. bullish candle (hammer or bullish engulfing)
+  5. any green close (close > open) -- loosened 2026-09-05 from the earlier
+     strict hammer/bullish-engulfing requirement. A 750-ticker mega-cap-only
+     choke-point test found the strict candle pattern was the dominant
+     bottleneck on signal frequency (3.56x more raw signals when loosened,
+     vs 1.71x for loosening the RSI-momentum confirm), and the full R/R +
+     $3k Global Heap Allocator backtest confirmed it as real alpha, not
+     noise: $116.21/mo vs $38.90/mo for the strict rule, paired with the
+     strike-only exit below. The exact hammer/bullish-engulfing pattern is
+     still computed and reported (`candle_pattern` in checks) for visibility,
+     it just no longer gates entry.
 
 Exit rule:
-  - Thesis invalidation = close below short strike OR close below MA150 (hard)
+  - Thesis invalidation = close below short strike ONLY (hard). MA150 breach
+    is advisory, not a hard stop -- reinstated as advisory-only 2026-09-05
+    (briefly a hard stop earlier that day, Config B) after the same
+    loosened-candle backtest found MA150-as-a-hard-stop catastrophic when
+    paired with looser entries ($116.21/mo -> -$19.57/mo): looser "any green
+    close" entries land closer to MA150 at entry, so a hard MA150 stop
+    whipsaws out of positions that still have room to work. The strike
+    breach alone tolerates that noise. NOTE: this is the opposite ranking
+    from the strict-entry, 1,591-ticker-universe backtest earlier the same
+    night (there, MA150-as-hard-stop won by 5.7x) -- exit-rule optimality
+    depends on entry strictness and universe/capital constraints, not on one
+    universal answer. Going live for forward-testing on this combination
+    specifically (750-ticker mega-cap-only, loosened-candle entry).
   - RSI > 70 / bearish candle (shooting star, bearish engulfing) = discretionary watch signals only
 """
 
@@ -184,7 +205,10 @@ def entry_checks(
         bars[-2]["open"] if len(bars) >= 2 else None,
         bars[-2]["close"] if len(bars) >= 2 else None,
     )
-    checks["bullish_candle"] = pattern != "none"
+    # bullish_candle gate loosened 2026-09-05: any green close (close > open),
+    # not the strict hammer/bullish-engulfing pattern -- see module docstring.
+    # candle_pattern is still computed and reported for visibility.
+    checks["bullish_candle"] = bars[-1]["close"] > bars[-1]["open"]
     checks["candle_pattern"] = pattern
 
     # Gate confirmation: default (None, None) keeps exact legacy all-7 behavior.
@@ -383,18 +407,19 @@ def exit_checks(closes, bars, short_strike, rsis=None):
     checks["bearish_candle"] = pattern != "none"
     checks["candle_pattern"] = pattern
 
-    # thesis_invalidated is the hard-CLOSE gate: short strike breach OR MA150
-    # breach. MA150 was briefly demoted to advisory-only earlier on 2026-09-05
-    # after a 750-ticker-only backtest found it net-destructive as a
-    # deterministic stop on that universe. Reinstated as a hard stop the same
-    # day after a $3k Global-Heap-Allocator backtest on the expanded
-    # 1,591-ticker universe (750 mega-cap + 841 mid/small-cap, the universe
-    # now live) showed uniform MA150-everywhere beating strike-only by 5.7x
-    # monthly P&L ($71.11/mo vs -$18.72/mo) -- including on the mega-cap
-    # subset alone, contradicting the earlier single-universe result. Shipped
-    # for forward-testing; the contradiction is deliberately left unresolved
-    # by further backtesting -- live data decides it, not another simulation.
-    thesis_invalidated = checks["short_strike_breached"] or checks["broke_ma150_support"]
+    # thesis_invalidated is the hard-CLOSE gate: short strike breach only.
+    # MA150 breach is advisory (see checks["broke_ma150_support"]), not a hard
+    # stop. Went back and forth twice on 2026-09-05: strict-entry + expanded
+    # 1,591-ticker universe backtest favored MA150-as-hard-stop by 5.7x; but
+    # once the entry candle rule was loosened to "any green close" (see
+    # entry_checks/module docstring), the same test flipped hard the other
+    # way ($116.21/mo strike-only vs -$19.57/mo with MA150 hard stop) --
+    # looser entries land closer to MA150 at signal time, so a hard MA150
+    # stop whipsaws out of positions that still have room to work. Locked
+    # to strike-only for the final combination going live: 750-ticker
+    # mega-cap-only universe + loosened-candle entry. broke_ma150_support
+    # still surfaces in `checks` for the exit-guard's RECOMMEND EXIT tier.
+    thesis_invalidated = checks["short_strike_breached"]
     return checks, thesis_invalidated
 
 
