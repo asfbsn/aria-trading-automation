@@ -9,12 +9,10 @@ state/
 # Transient daily priority overlay (date-gated instructor picks)
 priority-today.md
 
-# Backtest research tool — its own venv + generated run output
+# Backtest research tool — its own venv + generated run output (regenerable
+# from the committed scripts; scripts are the durable artifact, not the CSVs)
 scripts/backtest/.venv/
-scripts/backtest/run_out/
-scripts/backtest/run_out_bear/
-scripts/backtest/run_out_full_universe/
-scripts/backtest/run_out_full_universe_narrow/
-scripts/backtest/run_out_smallcap_narrow/
+scripts/backtest/run_out*/
+scripts/backtest/*.pkl
 scripts/backtest/__pycache__/
 scripts/__pycache__/
