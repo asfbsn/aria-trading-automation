@@ -62,9 +62,32 @@ send_telegram() {
   if [ -z "$tok" ] || [ -z "$chat" ]; then
     echo "[$RUN_TS] Telegram not configured; skipping." >>"$ERR_FILE"; return 0
   fi
-  curl -s -m 30 "https://api.telegram.org/bot${tok}/sendMessage" \
+  # -sS: silent but still emit curl's own error text on transport failure.
+  # -w '\n%{http_code}': append the HTTP status as the response's last line
+  # so a 4xx/5xx (bad token, wrong chat_id, etc) is distinguishable from a
+  # transport-level failure (DNS/timeout) -- and, critically, from success.
+  # Never swallowed with `|| true` anymore: every failure path writes a
+  # loud, greppable line to $ERR_FILE AND returns 1, so a caller that
+  # branches on this (see gtc-guard.sh) sees the truth. Callers here run
+  # under `set +e` already (see the block below), so a non-zero return
+  # can't take the rest of the script down with it.
+  local response http_code body curl_ec
+  response="$(curl -sS -m 30 -w $'\n%{http_code}' \
+    "https://api.telegram.org/bot${tok}/sendMessage" \
     --data-urlencode "chat_id=${chat}" \
-    --data-urlencode "text=${msg}" >/dev/null 2>>"$ERR_FILE" || true
+    --data-urlencode "text=${msg}" 2>>"$ERR_FILE")"
+  curl_ec=$?
+  if [ "$curl_ec" -ne 0 ]; then
+    echo "[$RUN_TS] TELEGRAM SEND FAILED — curl transport error (exit $curl_ec: network/DNS/timeout). Alerts are NOT reaching Telegram." >>"$ERR_FILE"
+    return 1
+  fi
+  http_code="${response##*$'\n'}"
+  body="${response%$'\n'*}"
+  if [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+    return 0
+  fi
+  echo "[$RUN_TS] TELEGRAM SEND FAILED — HTTP ${http_code:-none}. Alerts are NOT reaching Telegram. Response: ${body}" >>"$ERR_FILE"
+  return 1
 }
 
 mkdir -p "$LOG_DIR" "$STATE_DIR" "$STATE_DIR/scratch"
@@ -131,12 +154,15 @@ set +e
 trap - ERR
 if [ "${CLAUDE_EC:-1}" = "0" ] && grep -q '^POSITIONS_CHECKED:' "$LOG_FILE"; then
   BODY="$(sed -n '3,40p' "$LOG_FILE" | head -c 3800)"
-  send_telegram "$(printf '🛡️ %s\n\n%s' "$TODAY" "$BODY")"
-  notify "Exit Guard sent" "$TODAY"
+  if send_telegram "$(printf '🛡️ %s\n\n%s' "$TODAY" "$BODY")"; then
+    notify "Exit Guard sent" "$TODAY"
+  else
+    notify "Exit Guard: Telegram FAILED" "report is in $LOG_FILE — review manually"
+  fi
   echo "[$RUN_TS] Done → $LOG_FILE" >>"$ERR_FILE"
   exit 0
 else
-  send_telegram "🔴 Exit Guard FAILED — ${TODAY}. Check open positions manually. Log: $LOG_FILE"
+  send_telegram "🔴 Exit Guard FAILED — ${TODAY}. Check open positions manually. Log: $LOG_FILE" || true
   notify "Exit Guard FAILED" "check positions manually"
   echo "[$RUN_TS] FAILURE: claude_ec=${CLAUDE_EC:-?}" >>"$ERR_FILE"
   exit 1

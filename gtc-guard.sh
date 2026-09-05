@@ -50,9 +50,31 @@ send_telegram() {
   if [ -z "$tok" ] || [ -z "$chat" ]; then
     echo "[$RUN_TS] Telegram not configured; skipping." >>"$ERR_FILE"; return 0
   fi
-  curl -s -m 30 --fail "https://api.telegram.org/bot${tok}/sendMessage" \
+  # -sS: silent but still emit curl's own error text on transport failure.
+  # -w '\n%{http_code}': append the HTTP status as the response's last line,
+  # so a 4xx/5xx (bad token, wrong chat_id, etc) is distinguishable from a
+  # transport-level failure (DNS/timeout) and from success -- replaces the
+  # old bare `--fail` (which caught HTTP errors via exit code but logged no
+  # detail at all, since -s alone suppresses curl's own error text too).
+  # Return code is unchanged in spirit (0/1) so the existing caller's
+  # if/else still works -- it just now also logs WHY, loudly.
+  local response http_code body curl_ec
+  response="$(curl -sS -m 30 -w $'\n%{http_code}' \
+    "https://api.telegram.org/bot${tok}/sendMessage" \
     --data-urlencode "chat_id=${chat}" \
-    --data-urlencode "text=${msg}" >/dev/null 2>>"$ERR_FILE"
+    --data-urlencode "text=${msg}" 2>>"$ERR_FILE")"
+  curl_ec=$?
+  if [ "$curl_ec" -ne 0 ]; then
+    echo "[$RUN_TS] TELEGRAM SEND FAILED — curl transport error (exit $curl_ec: network/DNS/timeout). Alerts are NOT reaching Telegram." >>"$ERR_FILE"
+    return 1
+  fi
+  http_code="${response##*$'\n'}"
+  body="${response%$'\n'*}"
+  if [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+    return 0
+  fi
+  echo "[$RUN_TS] TELEGRAM SEND FAILED — HTTP ${http_code:-none}. Alerts are NOT reaching Telegram. Response: ${body}" >>"$ERR_FILE"
+  return 1
 }
 
 mkdir -p "$LOG_DIR" "$STATE_DIR"
