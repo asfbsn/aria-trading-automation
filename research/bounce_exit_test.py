@@ -59,10 +59,12 @@ CIRCUIT_BREAKER_PCT = 0.025
 MONTHS = 36.0
 
 
-def simulate_bounce_exit(entry, price_df, k_long):
+def simulate_bounce_exit(entry, price_df, k_long, circuit_breaker_pct=CIRCUIT_BREAKER_PCT):
     """Same TP/pricing mechanics as loosened_entry_full_pipeline.simulate_one,
     but the strike-breach hard stop is replaced by the pending-exit state
-    machine described in the module docstring.
+    machine described in the module docstring. circuit_breaker_pct is a
+    parameter (not just the module default) so bounce_exit_oos_test.py can
+    sweep it on an in-sample window without duplicating this function.
     """
     entry_date = entry["entry_date"]; expiry = entry["expiry"]
     k_short = entry["short_strike"]
@@ -99,7 +101,7 @@ def simulate_bounce_exit(entry, price_df, k_long):
                 pending = True  # breach day -- do NOT exit, enter Pending Exit
                 continue
         else:
-            if S < k_short * (1.0 - CIRCUIT_BREAKER_PCT):
+            if S < k_short * (1.0 - circuit_breaker_pct):
                 return {"exit_date": d, "pnl": (credit - cost_to_close) * 100.0, "credit": credit, "reason": "CIRCUIT_BREAKER"}
             if S > O:
                 return {"exit_date": d, "pnl": (credit - cost_to_close) * 100.0, "credit": credit, "reason": "BOUNCE"}
