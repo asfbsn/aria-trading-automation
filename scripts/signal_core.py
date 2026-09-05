@@ -395,6 +395,7 @@ def exit_checks(closes, bars, short_strike, rsis=None):
 
     checks = {
         "short_strike_breached": short_breached,
+        "short_strike_unknown": short_strike is None,
         "broke_ma150_support": ma150_breached,
         "volume_confirmed_breakdown": volume_confirmed,
         "rsi_overbought": rsi_now is not None and rsi_now > 70.0,
