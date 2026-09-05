@@ -1,4 +1,5 @@
 ticker,sector,approx_mktcap_usd
+NVDA,Information Technology,5562502742016
 AAPL,Information Technology,4665175441408
 GOOGL,Communication,4231927169024
 GOOG,Communication,4188875259904
@@ -15,7 +16,7 @@ JPM,Financials,948733280256
 WMT,Consumer Staples,818170888192
 AMD,Information Technology,769800077312
 V,Financials,712745287680
-ASML,Technology,652478316544
+ASML,Information Technology,652478316544
 XOM,Energy,639690145792
 JNJ,Health Care,639213502464
 MA,Financials,521733996544
@@ -44,7 +45,7 @@ PM,Consumer Staples,299316117504
 DELL,Information Technology,297076883456
 RTX,Industrials,284862152704
 WFC,Financials,260668719104
-ARM,Technology,258455781376
+ARM,Information Technology,258455781376
 ANET,Information Technology,246935175168
 GEV,Industrials,244672675840
 TXN,Information Technology,235261722624
@@ -59,7 +60,7 @@ IBM,Information Technology,222037524480
 SNDK,Information Technology,217076416512
 CRM,Information Technology,213519122432
 VZ,Communication,207477014528
-SHOP,Technology,199397621760
+SHOP,Information Technology,199397621760
 MRVL,Information Technology,195176185856
 APH,Information Technology,195076472832
 ABT,Health Care,194598912000
@@ -105,7 +106,7 @@ PGR,Financials,127040086016
 SYK,Health Care,126034427904
 PH,Industrials,125204922368
 SBUX,Consumer Discretionary,123062992896
-PDD,Consumer Cyclical,121800040448
+PDD,Consumer Discretionary,121800040448
 FTNT,Information Technology,120329043968
 CVS,Health Care,119136092160
 MDT,Health Care,116615847936
@@ -132,7 +133,7 @@ KKR,Financials,101576491008
 SO,Utilities,101493653504
 VLO,Energy,101252571136
 VRT,Industrials,99669590016
-MELI,Consumer Cyclical,99222257664
+MELI,Consumer Discretionary,99222257664
 TT,Industrials,98523078656
 CEG,Utilities,98472648704
 PSX,Energy,97467301888
@@ -225,7 +226,7 @@ D,Utilities,57547382784
 FAST,Industrials,57294557184
 AU,Materials,57164570624
 NUE,Materials,56844271616
-NBIS,Communication Services,56271314944
+NBIS,Communication,56271314944
 NXPI,Information Technology,56170831872
 TER,Information Technology,55785508864
 NDAQ,Financials,55433781248
@@ -260,7 +261,7 @@ AXON,Industrials,49071865856
 LHX,Industrials,48971649024
 TEAM,Information Technology,48800100352
 AZO,Consumer Discretionary,48079150953
-CCEP,Consumer Defensive,48021991424
+CCEP,Consumer Staples,48021991424
 CARR,Industrials,47975718912
 CMG,Consumer Discretionary,47940489216
 ROK,Industrials,47728177152
