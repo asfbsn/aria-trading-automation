@@ -153,7 +153,16 @@ set -e
 set +e
 trap - ERR
 if [ "${CLAUDE_EC:-1}" = "0" ] && grep -q '^POSITIONS_CHECKED:' "$LOG_FILE"; then
-  BODY="$(sed -n '3,40p' "$LOG_FILE" | head -c 3800)"
+  # Telegram caps messages at 4096 chars; if the position list doesn't fit, say so
+  # loudly rather than silently dropping rows -- a truncated pre-open exit review is
+  # exactly the missed-CLOSE-verdict failure mode this guard exists to prevent
+  # (mirrors gtc-guard.sh's own truncation guard).
+  FULL_BODY="$(sed -n '3,$p' "$LOG_FILE")"
+  BODY="$(printf '%s' "$FULL_BODY" | head -c 3800)"
+  if [ "${#FULL_BODY}" -gt 3800 ]; then
+    BODY="$BODY
+⚠️ TRUNCATED — full report in $LOG_FILE, review it before the open."
+  fi
   if send_telegram "$(printf '🛡️ %s\n\n%s' "$TODAY" "$BODY")"; then
     notify "Exit Guard sent" "$TODAY"
   else

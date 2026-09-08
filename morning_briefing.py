@@ -36,6 +36,7 @@ needed --
 guards -- fires every 3 min across the Israel-local range the true 09:16-
 09:29 ET window can fall in across DST, self-gates internally below.)
 """
+import os
 import re
 import sys
 import urllib.error
@@ -50,8 +51,8 @@ LOG_DIR = ARIA_HOME / "logs"
 HOLIDAYS_FILE = ARIA_HOME / "us-market-holidays.txt"
 ENV_FILE = ARIA_HOME / ".env"
 
-WINDOW_START_HHMM = 916
-WINDOW_END_HHMM = 929
+WINDOW_START_HHMM = int(os.environ.get("BRIEFING_WINDOW_START_HHMM", "916"))
+WINDOW_END_HHMM = int(os.environ.get("BRIEFING_WINDOW_END_HHMM", "929"))
 
 TODAY = date.today().isoformat()
 RUN_TS = datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z")
@@ -207,7 +208,7 @@ def send_telegram(msg: str, env: dict) -> bool:
 
 
 def main() -> int:
-    force = "--force" in sys.argv or __import__("os").environ.get("FORCE_RUN") == "true"
+    force = "--force" in sys.argv or os.environ.get("FORCE_RUN") == "true"
     if not check_schedule_gate(force):
         return 0
 
@@ -221,9 +222,9 @@ def main() -> int:
 
     if send_telegram(message, env):
         log_err("Done -- sent.")
-    else:
-        log_err(f"Done -- Telegram send failed, report is in {LOG_FILE}.")
-    return 0
+        return 0
+    log_err(f"Done -- Telegram send failed, report is in {LOG_FILE}.")
+    return 1
 
 
 if __name__ == "__main__":

@@ -448,8 +448,12 @@ def run_options_backtest(
                 if len(strikes) >= 2:
                     width = max(strikes) - min(strikes)
                     contracts = max(abs(leg.get("qty", 1)) for leg in legs)
+                    # net_credit already scales with leg qty (sum over legs of
+                    # -price*qty), so multiplying by contracts again below
+                    # double-counts it for |qty| > 1 -- normalize to a single
+                    # contract's credit first, matching sib_credit below.
                     net_credit = sum(-p * leg.get("qty", 1)
-                                     for p, leg in zip(leg_prices, legs))
+                                     for p, leg in zip(leg_prices, legs)) / contracts
                     new_reserve = (width - net_credit) * contract_multiplier * contracts
                     open_reserve = 0.0
                     seen_groups = set()
@@ -459,7 +463,7 @@ def run_options_backtest(
                             sibs = [q for q in positions if q.group_id == p.group_id]
                             sib_strikes = [q.strike for q in sibs]
                             sib_contracts = max(abs(q.qty) for q in sibs)
-                            sib_credit = sum(-q.entry_price * q.qty for q in sibs)
+                            sib_credit = sum(-q.entry_price * q.qty for q in sibs) / sib_contracts
                             open_reserve += ((max(sib_strikes) - min(sib_strikes) - sib_credit)
                                              * contract_multiplier * sib_contracts)
                     if open_reserve + new_reserve > cash * spread_margin_pct:
@@ -524,7 +528,8 @@ def run_options_backtest(
                 elif action == "close":
                     # Close: find matching position, honoring a partial-close qty.
                     matched = _find_matching_position(
-                        positions, underlying, leg_type, strike, expiry)
+                        positions, underlying, leg_type, strike, expiry,
+                        group_id=sig.get("group_id"))
                     if matched:
                         # An explicit leg ``qty`` closes only that many contracts
                         # (clamped to the open size); a close leg with no ``qty``
@@ -589,10 +594,17 @@ def run_options_backtest(
             iv_val = ivs.get(pos.underlying_code, 0.3)
             T = pos.time_to_expiry(ts)
 
-            mark_price = bs_price(spot, pos.strike, T, risk_free_rate, iv_val, pos.option_type)
+            # Match the smile adjustment applied at entry (leg pre-pricing
+            # loop above) -- marking at the flat iv_val here would price every
+            # open position at a different vol than it was opened at, adding
+            # a phantom day-1 P&L that distorts drawdown/Sharpe.
+            mark_iv = iv_val
+            if iv_skew != 0 or iv_curvature != 0:
+                mark_iv = iv_smile_adjustment(spot, pos.strike, iv_val, iv_skew, iv_curvature)
+            mark_price = bs_price(spot, pos.strike, T, risk_free_rate, mark_iv, pos.option_type)
             portfolio_value += mark_price * pos.qty * contract_multiplier
 
-            greeks = bs_greeks(spot, pos.strike, T, risk_free_rate, iv_val, pos.option_type)
+            greeks = bs_greeks(spot, pos.strike, T, risk_free_rate, mark_iv, pos.option_type)
             total_delta += greeks["delta"] * pos.qty * contract_multiplier
             total_gamma += greeks["gamma"] * pos.qty * contract_multiplier
             total_theta += greeks["theta"] * pos.qty * contract_multiplier
@@ -653,6 +665,7 @@ def _find_matching_position(
     option_type: str,
     strike: float,
     expiry: str,
+    group_id: Optional[str] = None,
 ) -> Optional[OptionPosition]:
     """Find a matching open position.
 
@@ -662,18 +675,32 @@ def _find_matching_position(
         option_type: Option type.
         strike: Strike price.
         expiry: Expiry date string.
+        group_id: If given, prefer a position from this spread group -- two
+            spreads on the same ticker/short strike/expiry opened on
+            different dates are otherwise indistinguishable, and a close
+            would silently hit the older lot (wrong entry_date, breaks the
+            (code, entry_date) grouping runner scripts use for spread-level
+            P&L). Falls back to the underlying/type/strike/expiry match if
+            no group_id is given or no candidate carries a matching one.
 
     Returns:
         Matching position, or None if not found.
     """
     expiry_ts = pd.Timestamp(expiry)
-    for pos in positions:
+    candidates = [
+        pos for pos in positions
         if (pos.underlying_code == underlying
-                and pos.option_type == option_type
-                and abs(pos.strike - strike) < 1e-6
-                and pos.expiry == expiry_ts):
-            return pos
-    return None
+            and pos.option_type == option_type
+            and abs(pos.strike - strike) < 1e-6
+            and pos.expiry == expiry_ts)
+    ]
+    if not candidates:
+        return None
+    if group_id:
+        for pos in candidates:
+            if pos.group_id == group_id:
+                return pos
+    return candidates[0]
 
 
 def _calc_options_metrics(

@@ -17,7 +17,7 @@ import yfinance as yf
 BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE.parent))
 sys.path.insert(0, str(BASE))
-from signal_core import sma, rsi_series, candle_pattern, MA50_BAND, MA150_BAND, MIN_BARS, VOLUME_MA_LENGTH, RSI_THRESHOLD
+from signal_core import sma, rsi_series, entry_checks, MIN_BARS
 from options_portfolio import bs_price, historical_volatility, iv_smile_adjustment
 from heap_allocator_sim import simulate_heap_allocation
 from run_heap_allocator_baseline_check import load_sector_map
@@ -85,6 +85,8 @@ def generate_entries(cfg):
         volumes = df["volume"].tolist()
         dates = list(df.index)
         rsis = rsi_series(closes)
+        bars = [{"open": o, "high": h, "low": l, "close": c}
+                for o, h, l, c in zip(opens, highs, lows, closes)]
         open_until = None
         for i in range(len(df)):
             if i < MIN_BARS or i < 1 or i + 1 >= len(dates):
@@ -97,44 +99,39 @@ def generate_entries(cfg):
                 open_until = None
 
             close = closes[i]
-            ma50 = sma(closes[: i + 1], 50)
             ma150 = sma(closes[: i + 1], 150)
-            vol_ma20 = sma(volumes[: i + 1], VOLUME_MA_LENGTH)
-            rsi_now = rsis[i]
-            rsi_prev2 = rsis[i - 2] if i >= 2 else None
 
-            below_ma50_pct = (ma50 - close) / ma50 if ma50 else None
-            above_ma150_pct = (close - ma150) / ma150 if ma150 else None
-
+            # Reuse signal_core.entry_checks() for every structural/momentum/
+            # volume/candle computation instead of re-deriving the MA-band/
+            # RSI/volume formulas locally -- a later change to the live gate
+            # (signal_core.entry_checks) now reaches this comparison
+            # automatically instead of silently going stale against a frozen
+            # copy of the constants.
+            checks, _ = entry_checks(
+                closes[: i + 1], volumes[: i + 1], bars[: i + 1], rsis=rsis[: i + 1]
+            )
             structural_ok = (
-                ma150 is not None and close > ma150
-                and rsi_now is not None and rsi_now < RSI_THRESHOLD
-                and below_ma50_pct is not None and MA50_BAND[0] <= below_ma50_pct <= MA50_BAND[1]
-                and above_ma150_pct is not None and MA150_BAND[0] <= above_ma150_pct <= MA150_BAND[1]
+                checks["above_ma150"] and checks["rsi_below_50"]
+                and checks["near_ma50_pullback"] and checks["near_ma150_support"]
             )
             if not structural_ok:
                 continue
-            if not (vol_ma20 is not None and volumes[i] > vol_ma20):
+            if not checks["volume_above_avg"]:
                 continue
-            if cfg["drop_momentum"]:
-                momentum_ok = True
-            else:
-                momentum_ok = rsi_now is not None and rsi_prev2 is not None and rsi_now > rsi_prev2
+            momentum_ok = True if cfg["drop_momentum"] else checks["rsi_rising"]
             if not momentum_ok:
                 continue
-            if cfg["loosen_candle"]:
-                candle_ok = closes[i] > opens[i]
-            else:
-                pattern = candle_pattern(opens[i], highs[i], lows[i], closes[i],
-                                          opens[i - 1] if i >= 1 else None,
-                                          closes[i - 1] if i >= 1 else None)
-                candle_ok = pattern != "none"
+            # entry_checks()'s own "bullish_candle" key is always the
+            # loosened any-green-close rule (locked 2026-09-05); the strict
+            # variant here instead requires its separately-returned
+            # candle_pattern (hammer/bullish-engulfing) to be non-"none".
+            candle_ok = checks["bullish_candle"] if cfg["loosen_candle"] else checks["candle_pattern"] != "none"
             if not candle_ok:
                 continue
 
             short_strike = np.floor(ma150 / 5.0) * 5.0
             if short_strike >= close:
-                short_strike = np.floor((ma150 - 0.01) / 5.0) * 5.0
+                short_strike = np.floor((min(ma150, close) - 0.01) / 5.0) * 5.0
             expiry_ts = entry_ts + pd.Timedelta(days=TARGET_DTE)
             expiry_ts += pd.Timedelta(days=(4 - expiry_ts.weekday()) % 7)
 

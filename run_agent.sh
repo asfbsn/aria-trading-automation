@@ -50,11 +50,19 @@ usage() {
 while [ $# -gt 0 ]; do
   case "$1" in
     --backend)
-      BACKEND="${2:-}"; shift 2 ;;
+      if [ $# -lt 2 ]; then
+        echo "ERROR: --backend requires a value." >&2
+        usage; exit 2
+      fi
+      BACKEND="$2"; shift 2 ;;
     --backend=*)
       BACKEND="${1#*=}"; shift ;;
     --model)
-      MODEL="${2:-}"; shift 2 ;;
+      if [ $# -lt 2 ]; then
+        echo "ERROR: --model requires a value." >&2
+        usage; exit 2
+      fi
+      MODEL="$2"; shift 2 ;;
     --model=*)
       MODEL="${1#*=}"; shift ;;
     -h|--help)
@@ -129,6 +137,10 @@ case "$BACKEND" in
     flock 9
 
     ORIGINAL_MODEL="$(jq -r '.model' "$AGY_SETTINGS")"
+    if [ -z "$ORIGINAL_MODEL" ] || [ "$ORIGINAL_MODEL" = "null" ]; then
+      echo "ERROR: no '.model' field in $AGY_SETTINGS; refusing to swap." >&2
+      exit 3
+    fi
     restore_model() {
       jq --arg m "$ORIGINAL_MODEL" '.model = $m' "$AGY_SETTINGS" > "$AGY_SETTINGS.tmp" \
         && mv "$AGY_SETTINGS.tmp" "$AGY_SETTINGS"

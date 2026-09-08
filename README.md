@@ -105,7 +105,7 @@ unnoticed.
 | `prompts/verify-rr-gate.md` | Ad-hoc wiring check for the IBKR R/R gate (1:1.5–2.5 band) |
 | `prompts/smoke-test.md` | Lightweight plumbing/auth check (one ticker) |
 | `us-market-holidays.txt` | NYSE full-day closures to skip (update yearly) |
-| `.env.example` | Template for `.env` (GUI, Claude auth, Telegram) |
+| `.env.example` | Template for `.env` (GUI, Claude auth; Telegram vars not included — add manually, see notes) |
 | `priority-today.md` | *(gitignored)* optional date-gated daily priority overlay |
 | `logs/`, `state/` | *(gitignored)* runtime output + hashes |
 
@@ -175,7 +175,7 @@ tickers to surface them at the top of that day's report. It auto-expires (date-g
 - **Known open issue (2026-08-26): headless cron runs still don't see the IBKR
   connector** — every cron log 08-11 → 08-25 is an abort or empty header, while
   interactive sessions attach IBKR fine. Until root-caused, run scans from an
-  interactive session (`FORCE_RUN=true ./daily-scan.sh`). The auth note below fixed
+  interactive session (`FORCE_RUN=true ./daily-scan.sh`). The auth note above fixed
   one cause (exported tokens); something in the cron environment still breaks
   connector attach.
 - `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` are not in `.env`/`.env.example` — all

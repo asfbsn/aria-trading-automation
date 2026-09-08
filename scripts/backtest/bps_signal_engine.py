@@ -101,7 +101,7 @@ class BullPutSpreadSignalEngine:
                 # width $10 wide.
                 short_strike = math.floor(ma150 / 5.0) * 5.0
                 if short_strike >= close:
-                    short_strike = math.floor((ma150 - 0.01) / 5.0) * 5.0
+                    short_strike = math.floor((min(ma150, close) - 0.01) / 5.0) * 5.0
                 long_strike = short_strike - self.width
 
                 # Expiry: next Friday on/after signal+TARGET_DTE (real chains

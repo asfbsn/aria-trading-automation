@@ -4,7 +4,7 @@ This is a core prompt in our strategy — ROR≥50% strike selector (IBKR-only, 
 
 - **Stocks to check:** [___]
   (one or several, comma-separated. E.g.: `AAPL` or `AAPL, MSFT, SPY`)
-- **Risk budget per trade:** [___]% of account NLV (default: 2%)
+- **Risk budget per trade:** [___]% of account NLV (illustrative sizing only — see Step F. Do NOT exceed the live "Global Heap" allocator's per-trade ceiling of 25% of net-liq or whatever `heap_remaining` is at staging time; this tool doesn't know current open positions/sector exposure)
 - **Days-to-expiration (DTE) range:** 25–40 (target: ~30)
 - **Spread widths to test:** **Dynamic — derived from the chain.** Take the actual strike spacing (S) around the current price, and test widths S, 2S, and 4S. Do NOT use a hardcoded list: a $17 stock has $0.5–1 spacing, a $280 stock has $5–10 spacing, and a width of 1 may not exist at all there.
 
@@ -118,6 +118,13 @@ Risk per contract = (W − C) × 100
 Number of contracts = floor(risk budget in dollars / risk per contract)
 ```
 If the result is 0 contracts — state this instead of presenting the trade as viable.
+
+**This sizing is illustrative only, not authoritative.** This tool checks the
+stocks I give it in isolation — it does not see current open positions, sector
+exposure, or `heap_remaining`. Before staging any real ticket, the full
+"Global Heap" allocator (`ibkr-live-workflow.md` Step 3) must be re-run
+against live account state; the contract count here can be reduced or
+blocked entirely (sector conflict, heap exhausted) at that point.
 
 ---
 
