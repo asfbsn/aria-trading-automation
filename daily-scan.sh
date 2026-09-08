@@ -36,7 +36,13 @@ HOLIDAYS_FILE="${HOLIDAYS_FILE:-$ARIA_HOME/us-market-holidays.txt}"
 # Phase B token-protection cap (scripts/prescreen.py --top-k): max entry_confirmed
 # tickers forwarded to IBKR verification. See prescreen.py's --top-k help for the
 # ranking rule (RSI20 ascending, tie-broken by MA150 proximity).
-PRESCREEN_TOP_K="${PRESCREEN_TOP_K:-12}"
+# Lowered 12->6 on 2026-09-08: a 12-candidate day (all 12 hitting the old cap)
+# still didn't finish inside CLAUDE_TIMEOUT (45m) and produced zero report --
+# the whole IBKR-verify + WebSearch research-gate cost scales with this number.
+# Excess candidates aren't lost, just deferred: they show up as
+# capped_out_tickers in state/scratch/prescreen_<date>.json and get picked up
+# again next run if still valid.
+PRESCREEN_TOP_K="${PRESCREEN_TOP_K:-6}"
 LOCK_FILE="${LOCK_FILE:-$ARIA_HOME/state/daily-scan.lock}"
 
 # Claude project dir = where data/universe.csv and scripts/compute_signal.py

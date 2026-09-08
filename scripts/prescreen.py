@@ -150,8 +150,16 @@ def main():
                 "volume": float(row["Volume"]),
             })
 
-        # SETTLED convention: drop last bar if it equals today (US/Eastern date)
+        # SETTLED convention: drop last bar if it equals today (US/Eastern date).
+        # Captured as live_close rather than discarded (2026-09-08): a name whose
+        # settled MA150/RSI/volume pullback looks textbook as of yesterday's close
+        # can still be breaking down in today's actual price action, and Phase A
+        # previously had no way to see that -- it would forward the name to the
+        # expensive Phase B (IBKR+WebSearch) stage regardless. See live-price
+        # sanity filter below, applied after entry_checks().
+        live_close = None
         if bars and bars[-1]["date"] == today_ny_str:
+            live_close = bars[-1]["close"]
             bars = bars[:-1]
 
         if len(bars) < MIN_BARS:
@@ -170,6 +178,29 @@ def main():
 
         checks, entry_confirmed = entry_checks(closes, volumes, bars, rsis=rsis)
 
+        # Same-day live-price sanity filter (2026-09-08): a settled-confirmed
+        # name whose LIVE intraday price has already broken back below the
+        # settled MA150 isn't a real Phase B candidate today, no matter how
+        # clean yesterday's close looked. Deliberately conservative -- only
+        # catches a genuine MA150 breach, not ordinary intraday softness (a
+        # same-day TradingView cross-check on PKG 2026-09-08 flagged RSI/
+        # volume/candle weakness well before any MA150 breach; this filter
+        # would NOT have caught that case, by design -- see the tighter
+        # %-down or volume-pace alternatives considered and rejected as
+        # noisier). Only applies when a live bar actually exists
+        # (skipped outside market hours / no live data yet, e.g. FORCE_RUN
+        # testing) and only ever downgrades an already-True result -- never
+        # used to promote a settled-failing name. Does not touch signal_core's
+        # entry_checks() gate logic; this is a Phase-A-only forwarding filter.
+        if entry_confirmed and live_close is not None and ma150 is not None and live_close <= ma150:
+            entry_confirmed = False
+            checks["live_filter_failed"] = True
+            checks["live_filter_reason"] = (
+                f"Live price ${live_close:.2f} has broken back below settled "
+                f"MA150 ${ma150:.2f} intraday -- yesterday's setup isn't "
+                f"holding up today, not forwarded to Phase B."
+            )
+
         # Shortlist rule (deliberately OVER-INCLUSIVE):
         # (a) close > MA150 * 0.99 (above_ma150 with a 1% grace margin), AND
         # (b) BOTH band checks pass with a ±1.5-percentage-point widened band:
@@ -187,6 +218,7 @@ def main():
                     "ma50": round(ma50, 2),
                     "ma150": round(ma150, 2),
                     "rsi20": round(rsi_now, 2) if rsi_now is not None else None,
+                    "live_close": round(live_close, 2) if live_close is not None else None,
                     "entry_confirmed": bool(entry_confirmed),
                     "checks": checks,
                 }
