@@ -48,7 +48,17 @@ else:
     data_map = {}
     for code in TICKERS:
         try:
-            df = raw[code].copy() if isinstance(raw.columns, pd.MultiIndex) else raw.copy()
+            if isinstance(raw.columns, pd.MultiIndex):
+                df = raw[code].copy()
+            elif len(TICKERS) == 1:
+                df = raw.copy()
+            else:
+                # yfinance returned flat (non-MultiIndex) columns for a
+                # >1-ticker request -- raw.copy() would silently assign the
+                # SAME frame to every remaining code, running this 750-ticker
+                # comparison on N identical series with no warning.
+                print(f"WARN: unexpected flat columns for {code}", file=sys.stderr)
+                continue
         except KeyError:
             continue
         if df is None or df.empty or df["Close"].dropna().empty:
