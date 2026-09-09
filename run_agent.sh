@@ -186,15 +186,22 @@ case "$BACKEND" in
     exit "$STATUS"
     ;;
   codex)
-    # -s workspace-write: real sandbox (writes confined to -C's dir + no
-    # network egress), not a full bypass -- still runs to completion
-    # unattended, no approval prompts, same as the other two backends. No
-    # network egress means this backend CANNOT fetch fresh yfinance/IBKR
-    # data -- do not route research/backtest tasks needing a live data pull
-    # here; it's for code edits on files/data already present in the repo.
+    # -s workspace-write: real sandbox (writes confined to -C's dir), not a
+    # full bypass -- still runs to completion unattended, no approval
+    # prompts, same as the other two backends.
+    # network_access=false is set EXPLICITLY, not assumed from the sandbox
+    # mode default (workspace-write's network posture is a config option,
+    # not a hardcoded property of the mode -- CodeRabbit caught this
+    # 2026-09-09 after the original comment here asserted "no network
+    # egress" without actually enforcing it; ~/.codex/config.toml doesn't
+    # set network_access, so it was resting on whatever the CLI's unstated
+    # default is). Do not route research/backtest tasks needing a live
+    # yfinance/IBKR data pull here regardless -- it's for code edits on
+    # files/data already present in the repo.
     exec codex exec \
       -C "$PWD" \
       -s workspace-write \
+      -c sandbox_workspace_write.network_access=false \
       -c model_reasoning_effort="$MODEL" \
       "$PROMPT"
     ;;
