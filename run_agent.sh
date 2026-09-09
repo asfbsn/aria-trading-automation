@@ -2,11 +2,25 @@
 # Lets Claude Code (the Orchestrator) delegate a task to a coding agent backend.
 #
 # Usage:
-#   ./run_agent.sh [--backend opencode|agy] [--model <id>] "<prompt>"
+#   ./run_agent.sh [--backend opencode|agy|codex] [--model <id>] "<prompt>"
 #
 # Defaults to the free OpenCode model, so the legacy form
 #   ./run_agent.sh "<prompt>"
 # keeps working unchanged.
+#
+# codex runs via the `codex` CLI, authenticated against a ChatGPT Plus login
+# (not an API key). Model is fixed to whatever ~/.codex/config.toml sets
+# (gpt-5.6-terra as of 2026-09-08); --model here selects *reasoning effort*
+# (low|medium|high), not a model id. Sandboxed workspace-write (-s
+# workspace-write), not the full-bypass posture opencode/agy use -- confined
+# to this repo, no network egress. That last part matters here specifically:
+# a delegated task that needs to fetch fresh yfinance/IBKR data (most
+# research/backtest work) CANNOT use codex -- route those to opencode/agy.
+# codex is the right lane for pure code edits/refactors on already-present
+# data or files (e.g. tonight's CodeRabbit-fix pattern), and it draws on an
+# independent ChatGPT Plus quota, not Google's (agy) or Sonnet's (this
+# session) -- ported from ketosense's run_agent.sh 2026-09-09, no aria-
+# specific track record yet, treat its first few real runs as calibration.
 #
 # Guards against nested delegation: if a delegated agent tries to call this
 # script again, it exits immediately instead of recursing.
@@ -38,13 +52,21 @@ AGY_MODELS=(
   "claude-sonnet-4-6"
   "claude-opus-4-6-thinking"
 )
+# codex's model id itself is fixed by ~/.codex/config.toml (not overridable
+# per-call the way opencode/agy swap model ids) -- these three values select
+# model_reasoning_effort instead.
+CODEX_MODELS=(
+  "low"
+  "medium"
+  "high"
+)
 
 BACKEND="opencode"
 MODEL=""
 PROMPT=""
 
 usage() {
-  echo "Usage: ./run_agent.sh [--backend opencode|agy] [--model <id>] \"<prompt>\"" >&2
+  echo "Usage: ./run_agent.sh [--backend opencode|agy|codex] [--model <id>] \"<prompt>\"" >&2
 }
 
 while [ $# -gt 0 ]; do
@@ -86,8 +108,9 @@ fi
 case "$BACKEND" in
   opencode) ALLOWED=("${OPENCODE_MODELS[@]}"); DEFAULT_MODEL="opencode/deepseek-v4-flash-free" ;;
   agy)      ALLOWED=("${AGY_MODELS[@]}");      DEFAULT_MODEL="gemini-3.6-flash-high" ;;
+  codex)    ALLOWED=("${CODEX_MODELS[@]}");    DEFAULT_MODEL="medium" ;;
   *)
-    echo "ERROR: unknown backend '$BACKEND' (expected: opencode, agy)." >&2
+    echo "ERROR: unknown backend '$BACKEND' (expected: opencode, agy, codex)." >&2
     exit 2 ;;
 esac
 
@@ -161,5 +184,18 @@ case "$BACKEND" in
     STATUS=$?
 
     exit "$STATUS"
+    ;;
+  codex)
+    # -s workspace-write: real sandbox (writes confined to -C's dir + no
+    # network egress), not a full bypass -- still runs to completion
+    # unattended, no approval prompts, same as the other two backends. No
+    # network egress means this backend CANNOT fetch fresh yfinance/IBKR
+    # data -- do not route research/backtest tasks needing a live data pull
+    # here; it's for code edits on files/data already present in the repo.
+    exec codex exec \
+      -C "$PWD" \
+      -s workspace-write \
+      -c model_reasoning_effort="$MODEL" \
+      "$PROMPT"
     ;;
 esac
