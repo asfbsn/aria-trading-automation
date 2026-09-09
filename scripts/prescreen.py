@@ -224,8 +224,8 @@ def main():
                 }
 
     # Top-K hard cap on Phase B — token protection. entry_confirmed already means
-    # "passed all 7 gating checks" (see signal_core.entry_checks), so there's no
-    # further check-count signal left to rank on; RSI20 (ascending) is the one
+    # "passed all 5 default gating checks" (see signal_core.entry_checks), so
+    # gate-check counts cannot distinguish these candidates; RSI20 (ascending) is the one
     # continuous number already computed that maps directly onto the strategy's
     # own thesis (rule 2: RSI<50 and rising — the lower within that band, the
     # deeper/more textbook the pullback), tie-broken by proximity to MA150
@@ -245,7 +245,7 @@ def main():
         per_ticker[t]["entry_confirmed"] = False
         per_ticker[t]["capped_out"] = True
         per_ticker[t]["cap_reason"] = (
-            f"Passed all 7 gating checks (structural_pass=true) but ranked below "
+            f"Passed all 5 default gating checks (preserved as structural_pass=true) but ranked below "
             f"the top-{args.top_k} Phase B cap on RSI20/MA150-proximity — not a "
             f"technical rejection, a token-protection triage. See topk_cap."
         )

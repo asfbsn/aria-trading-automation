@@ -5,23 +5,38 @@ and the backtest signal engine (scripts/backtest/bps_signal_engine.py).
 Keep this module dependency-free (no pandas/numpy) so the live path stays lean.
 
 Rule (mirrors prompts/bull-put-spread.md):
-  1. close > MA150                            (never short support from below)
-  2. RSI(20) < 50 and rising vs 2 bars ago
-  3. close is BELOW MA50 by 0%-10%, AND ABOVE MA150 by 0%-10%  (squeeze between
-     the two averages — pullback zone, real screener filter bands, confirmed
-     2026-08-24 from the live TradingView screener panel; replaces the earlier
-     "within 2% of nearest MA" placeholder, which was an undisclosed-band guess)
-  4. volume > 20-bar volume MA
-  5. any green close (close > open) -- loosened 2026-09-05 from the earlier
-     strict hammer/bullish-engulfing requirement. A 750-ticker mega-cap-only
-     choke-point test found the strict candle pattern was the dominant
-     bottleneck on signal frequency (3.56x more raw signals when loosened,
-     vs 1.71x for loosening the RSI-momentum confirm), and the full R/R +
-     $3k Global Heap Allocator backtest confirmed it as real alpha, not
-     noise: $116.21/mo vs $38.90/mo for the strict rule, paired with the
-     strike-only exit below. The exact hammer/bullish-engulfing pattern is
-     still computed and reported (`candle_pattern` in checks) for visibility,
-     it just no longer gates entry.
+  Default live gate requires all five checks:
+  1. rsi_below_50: RSI(20) < 50
+  2. rsi_rising: RSI(20) rising vs 2 bars ago
+  3. above_ma150: close > MA150 (strict)
+  4. near_ma150_support: close is 0%-10% above MA150 (inclusive)
+  5. bullish_candle: any green close (close > open)
+
+  above_ma150 is redundant with near_ma150_support in all but one case --
+  near_ma150_support's band lower bound is 0.0 (close >= ma150), so the
+  only daylight between the two is the exact equality close == ma150,
+  where near_ma150_support passes (>=) but above_ma150 fails (strict >).
+  Kept as a belt-and-suspenders gate for that single boundary point, not
+  because it changes behavior in any other case -- flagged in review
+  2026-09-09, cheap to close so it's closed rather than left as a known
+  edge case.
+
+  near_ma50_pullback and volume_above_avg are still computed and
+  reported, but do not gate by default. A live TradingView Pine-table
+  read against the real 'Adi option swing 2.0' dashboard on 2026-09-09
+  verified MA150 support gated approval; volume/candle did not vary with
+  the dashboard's approval verdict across 6 live samples. Only MA150,
+  volume, and candle were tested: near_ma50_pullback's dashboard-gating
+  status was never tested, so excluding it is a specification choice,
+  not a proven dashboard match.
+
+  bullish_candle is deliberately retained as an intentional divergence
+  for backtested edge, not because it matches the dashboard. Commit
+  05d60b2 found $116.21/mo loose-candle vs $38.90/mo strict-candle with
+  the full R/R + $3k Global Heap Allocator and strike-only exit below;
+  both configurations had a candle gate. No candle gate at all has never
+  been backtested. The strict hammer/bullish-engulfing candle_pattern is
+  still computed and reported for visibility, but does not gate entry.
 
 Exit rule:
   - Thesis invalidation = close below short strike ONLY (hard). MA150 breach
@@ -47,6 +62,14 @@ MA50_BAND = (0.0, 0.10)   # close is 0%-10% BELOW MA50: (ma50-close)/ma50 in thi
 MA150_BAND = (0.0, 0.10)  # close is 0%-10% ABOVE MA150: (close-ma150)/ma150 in this range
 VOLUME_MA_LENGTH = 20
 MIN_BARS = 150 + 5
+
+DEFAULT_GATE_KEYS = (
+    "rsi_below_50",
+    "rsi_rising",
+    "above_ma150",
+    "near_ma150_support",
+    "bullish_candle",
+)
 
 # Gate check categorization for backtest A/B comparison (not yet wired into live scan)
 STRUCTURAL_KEYS = (
@@ -211,13 +234,13 @@ def entry_checks(
     checks["bullish_candle"] = bars[-1]["close"] > bars[-1]["open"]
     checks["candle_pattern"] = pattern
 
-    # Gate confirmation: default (None, None) keeps exact legacy all-7 behavior.
+    # Gate confirmation: default (None, None) requires all of DEFAULT_GATE_KEYS.
     # When parameterized for backtest A/B comparison:
     # entry_confirmed = (structural checks >= min_structural) and (confirm checks >= min_confirm).
     if min_structural is None and min_confirm is None:
-        confirmed = all(v for k, v in checks.items()
-                        if k != "candle_pattern")
+        confirmed = all(checks[k] for k in DEFAULT_GATE_KEYS)
     else:
+        # This larger key set is a separate axis, not a looser version of the live default.
         req_struct = len(STRUCTURAL_KEYS) if min_structural is None else min_structural
         req_conf = len(CONFIRM_KEYS) if min_confirm is None else min_confirm
         struct_passed = sum(1 for k in STRUCTURAL_KEYS if checks.get(k, False)) >= req_struct

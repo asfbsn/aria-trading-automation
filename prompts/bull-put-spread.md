@@ -167,7 +167,10 @@ output from IBKR bars — that's the authoritative signal source for finalists.
    `above_ma150`, `rsi_below_50`, `rsi_rising`, `near_ma50_pullback`,
    `near_ma150_support`, `volume_above_avg`, `bullish_candle` (+ `candle_pattern`
    for context — doesn't gate). Official entry = `entry_confirmed: true` (all
-   seven gating checks pass). Discretionary (RADAR) = `entry_confirmed: false`
+   five default gating checks pass: `rsi_below_50`, `rsi_rising`, `above_ma150`,
+   `near_ma150_support`, `bullish_candle`). `near_ma50_pullback` and
+   `volume_above_avg` remain in `checks` for context but do not gate
+   `entry_confirmed` by default. Discretionary (RADAR) = `entry_confirmed: false`
    BUT structure strong (`above_ma150`, `near_ma150_support`, `volume_above_avg`,
    no imminent earnings) while only momentum/candle checks are weak — flag it,
    don't discard. List which checks are 🟢 vs 🔴.
@@ -329,7 +332,7 @@ For all names that survived ALL gates (technical rules + R/R verification + rese
 Then, per name, using its allocator result from above:
 
 - **WHAT:** ticker, exact short/long put strikes, expiration date (the ~30 DTE expiry already chosen in R/R VERIFICATION — do not re-pick), and which width the allocator selected (PRIMARY, or a FALLBACK forced by `heap_remaining` — see HOW MUCH).
-- **WHEN (execution-window rule):** this scan runs inside the 12:00–13:00 ET execution window (19:00–20:00 Israel). Directive = `EXECUTE NOW` **only if** the PROVISIONAL pass (unsettled bar, no `--exclude-last-bar`) shows ALL THREE of: `above_ma150`, `near_ma150_support`, `volume_above_avg` — i.e. today's live bar is confirming the settled signal at support with real volume, not fighting it. If any of the three is false on the provisional read → directive = `HOLD — provisional bar not confirming; re-evaluate next scan` (name which check failed). This gates EXECUTION TIMING only — PRIME classification itself stays based on the SETTLED read, per the existing Timing section.
+- **WHEN (execution-window rule):** this scan runs inside the 12:00–13:00 ET execution window (19:00–20:00 Israel). Directive = `EXECUTE NOW` **only if** the PROVISIONAL pass (unsettled bar, no `--exclude-last-bar`) shows BOTH of: `above_ma150`, `near_ma150_support` — i.e. today's live bar is confirming the settled signal at support, not fighting it. If either is false on the provisional read → directive = `HOLD — provisional bar not confirming; re-evaluate next scan` (name which check failed). `volume_above_avg` is excluded because it compares partial-session provisional volume against a 20-bar full-session average, structurally biasing it toward failing at midday regardless of real participation; it is not a fair timing signal. This gates EXECUTION TIMING only — PRIME classification itself stays based on the SETTLED read, per the existing Timing section.
 - **AT WHAT PRICE:** entry limit credit = the verified mid credit from R/R VERIFICATION **at the width the allocator selected** (state $ — re-state it if a FALLBACK width was forced by `heap_remaining` instead of PRIMARY); minimum acceptable credit = that width/3.5 (the 1:2.5 floor, state $) — if fills would require accepting less, do not chase, skip the trade.
 - **R/R restated:** print max loss ÷ credit; hard rule: if outside 1.5–2.5, NO directive is emitted for the name (even if it somehow reached this section) — it reverts to REJECT with reason "R/R outside 1.5–2.5 at directive stage".
 - **HOW MUCH (position sizing — from the allocator above):** state the allocation arithmetic directly: `heap_remaining` before this candidate, width selected, `max_loss_per_contract` (computed with the **minimum acceptable credit, width/3.5 — the same floor used in AT WHAT PRICE — not the verified mid**; the entry order may fill anywhere from mid down to that floor, and sizing off mid would understate max_loss if the actual fill lands at the floor), resulting `contracts`, capital consumed (`max_loss_per_contract × contracts`), and `heap_remaining` after. **If the allocator marked this candidate `BLOCKED — heap exhausted` → state that instead of an order; never emit a 0-contract order.**
