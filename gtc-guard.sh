@@ -128,18 +128,36 @@ PROMPT="$(cat "$PROMPT_FILE")"
 } >"$LOG_FILE"
 
 set +e
+# --settings disables claude-mem for this invocation only -- same cold-start
+# hook race that hit exit-guard.sh today (2026-09-10); see daily-scan.sh for
+# the full writeup and why --bare was rejected (breaks this box's OAuth auth).
+#
+# Output captured to its own RUN_OUTPUT file first, validated there, then
+# appended to LOG_FILE -- see exit-guard.sh's identical change (CodeRabbit
+# review, 2026-09-10) for why: not a real cross-run staleness bug (LOG_FILE
+# is already truncated fresh each invocation), but `grep -q` has no
+# positional awareness, so validating the isolated per-invocation capture
+# instead of the cumulative display file is the more defensible pattern.
+RUN_OUTPUT="$(mktemp)"
+trap 'rm -f "$RUN_OUTPUT"' EXIT
 printf '%s' "$PROMPT" | timeout "${CLAUDE_TIMEOUT:-5m}" "$CLAUDE_BIN" \
   --print \
   --model "$CLAUDE_MODEL" \
   --permission-mode default \
   --allowedTools "$CLAUDE_ALLOWED_TOOLS" \
-  >>"$LOG_FILE" 2>>"$ERR_FILE"
+  --settings '{"enabledPlugins":{"claude-mem@thedotmack":false}}' \
+  >"$RUN_OUTPUT" 2>>"$ERR_FILE"
 CLAUDE_EC=${PIPESTATUS[1]}
+cat "$RUN_OUTPUT" >>"$LOG_FILE"
 set -e
 
 set +e
 trap - ERR
-if [ "${CLAUDE_EC:-1}" = "0" ] && grep -q '^ORDERS_CHECKED:' "$LOG_FILE"; then
+# Requires the marker to be the LAST non-empty line, with an actual digit
+# after it -- see exit-guard.sh's identical fix for the full writeup
+# (2026-09-10 hook incident + CodeRabbit review same day).
+if [ "${CLAUDE_EC:-1}" = "0" ] \
+  && awk 'NF { last = $0 } END { exit last !~ /^ORDERS_CHECKED: [0-9]+$/ }' "$RUN_OUTPUT"; then
   # Telegram caps messages at 4096 chars; if the order list doesn't fit, say so
   # loudly rather than silently dropping rows — a truncated pre-open order review
   # is exactly the missed-order failure mode this guard exists to prevent.

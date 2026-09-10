@@ -251,11 +251,23 @@ set +e
 # trailing positional prompt as a tool name.
 # Hard cap on the headless run: a hung Claude/TradingView must not hold the
 # lock into tomorrow's cron. timeout exit 124 is treated as a failure below.
+# --settings disables claude-mem for this invocation only (not the global
+# config -- interactive sessions keep it). 2026-09-10 incident: claude-mem's
+# UserPromptSubmit hook hit a cold-start socket race against its own
+# worker-service daemon and blocked exit-guard.sh's/gtc-guard.sh's prompts
+# entirely, with `claude --print` still exiting 0. A one-shot cron scan gets
+# no benefit from claude-mem's cross-session memory anyway -- removing the
+# dependency removes the race, not just detects it after the fact (see the
+# SIGNALS_COMPLETED/CONSTITUENTS_MATCH cross-validation below, which is the
+# defense-in-depth layer for whatever this doesn't catch). --bare was
+# considered and rejected: it also disables OAuth/keychain reads, and this
+# box authenticates via ~/.claude/.credentials.json, not ANTHROPIC_API_KEY.
 printf '%s' "$PROMPT" | timeout "${CLAUDE_TIMEOUT:-45m}" "$CLAUDE_BIN" \
   --print \
   --model "$CLAUDE_MODEL" \
   --permission-mode default \
   --allowedTools "$CLAUDE_ALLOWED_TOOLS" \
+  --settings '{"enabledPlugins":{"claude-mem@thedotmack":false}}' \
   >>"$LOG_FILE" 2>>"$ERR_FILE"
 CLAUDE_EC=${PIPESTATUS[1]}
 set -e

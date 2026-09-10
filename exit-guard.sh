@@ -141,18 +141,53 @@ PROMPT="$(cat "$PROMPT_FILE")"
 } >"$LOG_FILE"
 
 set +e
+# --settings disables claude-mem for this invocation only -- root cause of
+# today's actual failure (2026-09-10): its UserPromptSubmit hook lost a
+# cold-start race against its own worker-service daemon and blocked this
+# prompt entirely while `claude --print` still exited 0. See daily-scan.sh
+# for the full writeup; same fix, --bare rejected there for the same reason
+# (breaks OAuth/keychain auth, which is what this box actually uses).
+#
+# Claude's output is captured to its own RUN_OUTPUT file first, validated
+# there, THEN appended to LOG_FILE -- not validated directly against
+# LOG_FILE. LOG_FILE is already truncated fresh each invocation (the header
+# write above uses > not >>), so this isn't closing a real cross-run
+# staleness bug; it closes a narrower gap in the same family (CodeRabbit
+# review, 2026-09-10): `grep -q` has no positional awareness, so a
+# marker-shaped line anywhere in the response -- e.g. the model echoing the
+# output-format spec mid-explanation with a plausible number before it's
+# actually finished -- would satisfy today's stricter digit check too.
+# Validating the isolated per-invocation capture is the more defensible
+# pattern regardless of whether that specific scenario has ever happened.
+RUN_OUTPUT="$(mktemp)"
+trap 'rm -f "$RUN_OUTPUT"' EXIT
 printf '%s' "$PROMPT" | timeout "${CLAUDE_TIMEOUT:-5m}" "$CLAUDE_BIN" \
   --print \
   --model "$CLAUDE_MODEL" \
   --permission-mode default \
   --allowedTools "$CLAUDE_ALLOWED_TOOLS" \
-  >>"$LOG_FILE" 2>>"$ERR_FILE"
+  --settings '{"enabledPlugins":{"claude-mem@thedotmack":false}}' \
+  >"$RUN_OUTPUT" 2>>"$ERR_FILE"
 CLAUDE_EC=${PIPESTATUS[1]}
+cat "$RUN_OUTPUT" >>"$LOG_FILE"
 set -e
 
 set +e
 trap - ERR
-if [ "${CLAUDE_EC:-1}" = "0" ] && grep -q '^POSITIONS_CHECKED:' "$LOG_FILE"; then
+# Requires the marker to be the LAST non-empty line, with an actual digit
+# after it -- not just present with a digit somewhere in the output.
+# (2026-09-10 incident: a UserPromptSubmit hook failure echoed the prompt
+# template -- which itself specifies "POSITIONS_CHECKED: <N>" as the output
+# format -- back into the log with claude --print still exiting 0. The
+# original `grep -q '^POSITIONS_CHECKED:'` matched that literal "<N>"
+# placeholder. The digit requirement alone (first fix) still didn't rule out
+# the model echoing the format spec mid-explanation with a plausible-looking
+# real number before actually finishing -- CodeRabbit review, 2026-09-10.
+# The prompt's own spec puts this marker "on its own final line", so
+# requiring it be the last non-empty line matches the intended format,
+# not an arbitrary new constraint.)
+if [ "${CLAUDE_EC:-1}" = "0" ] \
+  && awk 'NF { last = $0 } END { exit last !~ /^POSITIONS_CHECKED: [0-9]+$/ }' "$RUN_OUTPUT"; then
   # Telegram caps messages at 4096 chars; if the position list doesn't fit, say so
   # loudly rather than silently dropping rows -- a truncated pre-open exit review is
   # exactly the missed-CLOSE-verdict failure mode this guard exists to prevent
