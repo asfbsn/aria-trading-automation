@@ -1,0 +1,18 @@
+{
+  "captured_at": "2026-09-10T21:33:00+03:00",
+  "method": "dom_scrape_partial_UNVERIFIED",
+  "market_open": false,
+  "warning": "Partial and unscoped -- see scripts/audit/CAPTURE.md. Table is virtualized (not all 127 rows scraped) and this list mixes in an unrelated watchlist/index panel (SPY, SPX, IWM, NDQ, DJI, VIX, DXY, RSP, DIA, IBIT, ETHA, SOLZ). Good for proving audit_tier1.py's mechanics, NOT a real parity result.",
+  "symbols": [
+    "SPY", "SPX", "IWM", "NDQ", "DJI", "VIX", "DXY", "RSP", "DIA", "IBIT", "ETHA", "SOLZ",
+    "KLAC", "SYY", "URI", "BBIO", "FWONK", "AXSM", "SITM", "TXN", "STLD", "PM", "FWONA",
+    "CB", "ABBV", "DAL", "WSM", "EBAY", "APD", "CSCO", "MOG.A", "CINF", "IBKR", "KHC",
+    "INVH", "RTX", "PGR", "NLY", "MTB", "EG", "CGNX", "IEX", "VTR", "UHAL", "LFUS", "LYV",
+    "WRB", "EQIX", "HST", "ONTO", "ROK", "PH", "LLY", "AFG", "JAZZ", "USB", "GS", "UHAL.B",
+    "AME", "CR", "PNC", "EW", "AMGN", "NBIX", "FITB", "FHN", "GL", "TFC", "CVS", "RIVN",
+    "RS", "AMH", "RF", "DOC", "LAMR", "FLEX", "VLTO", "FCNCA", "UMBF", "EWBC", "AIT",
+    "VTRS", "D", "WAB", "SWK", "MOH", "PYPL", "UNP", "JLL", "TSEM", "GWW", "CFG", "CSX",
+    "NSC", "MCO", "TROW", "PNFP", "BPOP", "GRMN", "CFR", "ESS", "WTS", "AAPL", "VMRK",
+    "AHR", "PKG", "DASH", "BLK", "TRU", "CCK", "FRT", "EXPE", "ROST"
+  ]
+}
