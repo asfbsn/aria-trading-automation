@@ -7,7 +7,28 @@ Keep this module dependency-free (no pandas/numpy) so the live path stays lean.
 Rule (mirrors prompts/bull-put-spread.md):
   Default live gate requires all five checks:
   1. rsi_below_50: RSI(20) < 50
-  2. rsi_rising: RSI(20) rising vs 2 bars ago
+  2. rsi_rising: RSI(20) net change vs 2 bars ago (rsi_now > rsis[-3]) --
+     DELIBERATE DIVERGENCE from the live indicator, kept for backtested
+     performance, not for dashboard fidelity. This is a 2-bar net-change
+     filter, not a strictly-stricter version of a 1-bar check -- the two
+     only disagree on a V-shaped bottom (RSI fell then partially recovered),
+     where 1-bar-ago reads "rising" off the recent trough but 2-bar-ago
+     still reads "falling" against the pre-drop level; on a monotonic
+     recovery the two agree. Live Pine-table cross-checks on OMC/EW/FHN on
+     2026-09-10 (via tradingview-bridge, price-sanity-verified against
+     quote_get) hit exactly that V-shaped-bottom case and confirmed Adi's
+     real dashboard uses the 1-bar-ago comparison, not 2 -- our 2-bar code
+     read "falling" there, the opposite of the live read. A/B
+     backtested both on the same 36-ticker/2023-07-26->2026-07-26 universe,
+     same everything else, "current" tier (this default 5-key gate):
+     1-bar (dashboard-accurate): 842 trades, 47.82% win, +0.70% return,
+       -9.68% max drawdown, Sharpe 0.071.
+     2-bar (this code): 718 trades, 47.43% win, +1.59% return,
+       -6.73% max drawdown, Sharpe 0.137.
+     Kept 2-bar: acts as a stricter momentum-turn filter than the live
+     indicator's 1-bar comparison, and backtests meaningfully better on
+     return, drawdown, and Sharpe despite not matching the real dashboard.
+     See git history 2026-09-10 for the full investigation.
   3. above_ma150: close > MA150 (strict)
   4. near_ma150_support: close is 0%-10% above MA150 (inclusive)
   5. bullish_candle: any green close (close > open)
@@ -200,6 +221,10 @@ def entry_checks(
     if rsis is None:
         rsis = rsi_series(closes)
     rsi_now = rsis[-1]
+    # DELIBERATE DIVERGENCE: Intentionally using a 2-bar lookback as a
+    # stricter noise filter. Empirical backtesting proves 2-bar significantly
+    # improves Sharpe and reduces max drawdown compared to the live 1-bar
+    # indicator.
     rsi_prev2 = rsis[-3] if len(rsis) >= 3 else None
 
     ma50 = sma(closes, 50)

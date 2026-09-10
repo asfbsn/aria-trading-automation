@@ -41,13 +41,22 @@ pre-filtering.
   `compute_signal.py` in Phase B only for the finalist set (typically <=15 names).
   Pull option chains only for PRIME-eligible names (see R/R VERIFICATION). Write
   the report and exit cleanly.
-- **Macro context (once at scan start):** at scan start, ONCE (not per ticker),
-  run one WebSearch for current macro regime — VIX level, SPY vs its own MA150
-  trend, and any major scheduled macro event (Fed decision, CPI, jobs report)
-  inside the next ~30 days. Output a 3–5 line "Market Context" header before
-  Table 1. If a major macro event falls inside the ~30 DTE window, note it in
-  every directive block (context only — NOT a gate; the research gate handles
-  name-specific catalysts).
+- **Macro context (once at scan start):** at scan start, ONCE (not per ticker):
+  - **VIX level:** `search_contracts` for "VIX" (CBOE Volatility Index) to
+    resolve a contract, then `get_price_snapshot` on it for the current level.
+    WebSearch has no live quote feed and cannot answer this — don't use it
+    here. If the index doesn't resolve via IBKR, quote the exact error and say
+    "VIX unavailable" rather than guessing.
+  - **SPY vs MA150:** `get_price_history` for SPY, >=155 daily bars (same
+    minimum `compute_signal.py` uses for a stable MA150 read), compute the
+    150-day SMA of closes yourself, compare against the latest close.
+  - **Macro events in the next ~30 days** (Fed decision, CPI, jobs report):
+    one WebSearch — this one stays WebSearch, it's a genuine search question
+    (scheduled dates), not a live quote.
+  Output a 3–5 line "Market Context" header before Table 1. If a major macro
+  event falls inside the ~30 DTE window, note it in every directive block
+  (context only — NOT a gate; the research gate handles name-specific
+  catalysts).
 - **Entry signal**: the "Premium Trading Dashboard - Adi Radmy Edition" Pine
   indicator this strategy was originally built around is a protected/invite-only
   script (source confirmed unavailable 2026-07-09) — its exact internal formulas
@@ -331,8 +340,9 @@ For all names that survived ALL gates (technical rules + R/R verification + rese
 
 Then, per name, using its allocator result from above:
 
-- **WHAT:** ticker, exact short/long put strikes, expiration date (the ~30 DTE expiry already chosen in R/R VERIFICATION — do not re-pick), and which width the allocator selected (PRIMARY, or a FALLBACK forced by `heap_remaining` — see HOW MUCH).
+- **WHAT:** ticker, exact short/long put strikes, expiration date (the ~30 DTE expiry already chosen in R/R VERIFICATION — do not re-pick), which width the allocator selected (PRIMARY, or a FALLBACK forced by `heap_remaining` — see HOW MUCH), and the **SETTLED MA-150 value** for this name from this scan's `compute_signal.py` output (state it in $ — needed by the LIVE SANITY CHECK below).
 - **WHEN (execution-window rule):** this scan runs inside the 12:00–13:00 ET execution window (19:00–20:00 Israel). Directive = `EXECUTE NOW` **only if** the PROVISIONAL pass (unsettled bar, no `--exclude-last-bar`) shows BOTH of: `above_ma150`, `near_ma150_support` — i.e. today's live bar is confirming the settled signal at support, not fighting it. If either is false on the provisional read → directive = `HOLD — provisional bar not confirming; re-evaluate next scan` (name which check failed). `volume_above_avg` is excluded because it compares partial-session provisional volume against a 20-bar full-session average, structurally biasing it toward failing at midday regardless of real participation; it is not a fair timing signal. This gates EXECUTION TIMING only — PRIME classification itself stays based on the SETTLED read, per the existing Timing section.
+- **LIVE SANITY CHECK (mandatory, immediately before order entry — not a scan-time check):** the WHEN gate above is checked ONCE, at scan time. If you place the order more than a few minutes after reading this report, the setup can break in between — confirmed real 2026-09-10: BBIO/CSCO/FWONA/FWONK/TXN/URI all still confirmed `above_ma150`+`near_ma150_support` on the provisional pass at scan time (~12:15 ET), all had broken down further (RSI turning, support failing) by 13:47 ET the same session, a ~1.5hr gap, during a broad selloff — caught only because a separate liquidity gate happened to block those specific names first. Before submitting the order: pull ONE fresh quote (IBKR `get_price_snapshot` on the underlying, or a live TradingView check) and confirm current price is still ABOVE the SETTLED MA-150 value stated in WHAT. **If current price is at or below that MA-150 level — ABORT. Do not place the order.** (At-or-below, not strictly-below — matches the gate's own strict `above_ma150: close > ma150` requirement; a tie is a fail, same boundary rule as everywhere else in this pipeline.) State it as `ABORTED — support broken since scan (MA150 $X, scan-time price $Y, now $Z)`. This is a hard abort condition, not discretionary judgment.
 - **AT WHAT PRICE:** entry limit credit = the verified mid credit from R/R VERIFICATION **at the width the allocator selected** (state $ — re-state it if a FALLBACK width was forced by `heap_remaining` instead of PRIMARY); minimum acceptable credit = that width/3.5 (the 1:2.5 floor, state $) — if fills would require accepting less, do not chase, skip the trade.
 - **R/R restated:** print max loss ÷ credit; hard rule: if outside 1.5–2.5, NO directive is emitted for the name (even if it somehow reached this section) — it reverts to REJECT with reason "R/R outside 1.5–2.5 at directive stage".
 - **HOW MUCH (position sizing — from the allocator above):** state the allocation arithmetic directly: `heap_remaining` before this candidate, width selected, `max_loss_per_contract` (computed with the **minimum acceptable credit, width/3.5 — the same floor used in AT WHAT PRICE — not the verified mid**; the entry order may fill anywhere from mid down to that floor, and sizing off mid would understate max_loss if the actual fill lands at the floor), resulting `contracts`, capital consumed (`max_loss_per_contract × contracts`), and `heap_remaining` after. **If the allocator marked this candidate `BLOCKED — heap exhausted` → state that instead of an order; never emit a 0-contract order.**
