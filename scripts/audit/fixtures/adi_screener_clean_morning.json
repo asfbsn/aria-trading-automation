@@ -1,0 +1,20 @@
+{
+  "captured_at": "2026-09-10 morning IDT (exact time not specified)",
+  "method": "user-provided -- capture method not disclosed to the agent, not independently verified",
+  "symbols": [
+    "SYY", "FWONK", "BBIO", "FWONA", "AXSM", "URI", "WDC", "TXN", "ABBV", "GDDY",
+    "MDB", "PM", "JAZZ", "ABVX", "ZBH", "OHI", "CB", "PGR", "CSCO", "ERIE",
+    "EQIX", "STLD", "CINF", "LLY", "NBIX", "HST", "WSM", "INVH", "RNR", "MTB",
+    "AMH", "LFUS", "WST", "IEX", "DAL", "ZM", "LYV", "AFG", "FHN", "AMGN",
+    "NLY", "GL", "EG", "VTR", "AIT", "CR", "MOG.A", "CGNX", "DOC", "FITB",
+    "RF", "USB", "EW", "AME", "RTX", "VTRS", "EXPE", "CVS", "LAMR", "GS",
+    "EWBC", "IBKR", "TRU", "TFC", "GWW", "APD", "RS", "VLTO", "CFG", "PNC",
+    "UMBF", "ONTO", "UHAL.B", "FCNCA", "RIVN", "EBAY", "CFR", "ESS", "MOH", "KHC",
+    "GRMN", "CCK", "CSX", "UNP", "WTS", "MCO", "WAB", "NSC", "FLEX", "COF",
+    "TSEM", "PRU", "SITM", "AHR", "TROW", "PNFP", "DASH", "BPOP", "ETN", "DRI",
+    "CYTK", "JLL", "ROST", "AMZN", "FRT", "VMRK", "TRI", "MMM", "PYPL", "UNH",
+    "ASML", "MRSH", "BLK", "BXP", "SWK", "BRO", "JBHT", "SPGI", "CCEP", "MTD",
+    "AMCR", "ALLE", "KNX", "CART", "AJG", "RYAN", "WTW", "BX", "SE", "DLTR",
+    "IESC", "SHOP", "USFD"
+  ]
+}

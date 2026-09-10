@@ -117,9 +117,13 @@ def run_prescreen_refresh(out_path):
 
 def latest_prescreen_file():
     scratch_dir = os.path.join(REPO_ROOT, "state", "scratch")
-    candidates = sorted(
-        f for f in os.listdir(scratch_dir) if f.startswith("prescreen_") and f.endswith(".json")
-    )
+    if not os.path.isdir(scratch_dir):
+        candidates = []
+    else:
+        candidates = sorted(
+            f for f in os.listdir(scratch_dir)
+            if f.startswith("prescreen_") and f.endswith(".json")
+        )
     if not candidates:
         sys.exit(
             "No prescreen_*.json found in state/scratch/. "
