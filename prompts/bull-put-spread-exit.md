@@ -30,6 +30,7 @@ connected."
 
    No open bull-put-spread positions.
 
+   UNPAIRED_LEGS: 0
    POSITIONS_CHECKED: 0
    ```
    and stop. But if there are zero valid spread PAIRS while one or more
@@ -45,11 +46,16 @@ connected."
      "no matching offsetting leg", "same underlying/expiry but not both
      puts", "quantities don't offset"]
 
+   UNPAIRED_LEGS: N
    POSITIONS_CHECKED: 0
    ```
    and stop (empty of valid spreads is not an error, same as GTC guard — the
-   final marker line is still required so the wrapper recognizes this as a
+   final marker lines are still required so the wrapper recognizes this as a
    successful run, not a failure).
+   `UNPAIRED_LEGS: N` (here and in the main Output format below) is the count
+   of unpaired/ambiguous option legs, always emitted — 0 when there are none —
+   so the wrapper can detect the marker's absence as a report-parsing gap
+   rather than silently reading "no unpaired legs."
 
 2. **Compute technical exit signal:** For each open position pair:
    - `search_contracts` (security_type STK) on the underlying symbol → resolve
@@ -132,6 +138,9 @@ Bull Put Spread Exit Guard — <date>
 <N> open position(s) found.
 
 [one line per position, followed by optional PREMARKET NOTE line]
+[if any unpaired/ambiguous legs were found in step 1 alongside valid pairs,
+ list them here in the same format as the zero-pairs case above:
+   [TICKER] [side] [strike] [expiry] qty=[n] — [why it didn't pair]]
 ```
 
 Line format for each position:
@@ -141,10 +150,13 @@ Line format for each position:
 If a premarket note applies (meaningful move vs strike/MA150 or data unavailable), place it on its own line directly after that position's main verdict line, before moving to the next position:
 `  PREMARKET NOTE: [settled close, live price, and movement vs strike/MA150, or "premarket price: unavailable — verify manually"]`
 
-Then, on its own final line, emit exactly:
+Then, on its own two final lines, emit exactly:
+UNPAIRED_LEGS: <N>
 POSITIONS_CHECKED: <N>
+(`UNPAIRED_LEGS` is the count of unpaired/ambiguous legs found in step 1 —
+0 if none — always emitted, even when every leg paired cleanly.)
 
-**This must be the literal last line of the entire response — nothing may follow it,
+**`POSITIONS_CHECKED` must be the literal last line of the entire response — nothing may follow it,
 not even a trailing blank line with content after, a "trade math for reference" recap,
 or any other addendum.** The wrapper script parses the last non-empty line and hard-fails
 the run (no alert delivered) if it doesn't match `^POSITIONS_CHECKED: [0-9]+$` exactly —
