@@ -32,6 +32,19 @@ export ARIA_HOME="${ARIA_HOME:-$HOME/Projects/aria-trading}"
 LOG_DIR="${LOG_DIR:-$ARIA_HOME/logs}"
 STATE_DIR="${STATE_DIR:-$ARIA_HOME/state}"
 PROMPT_FILE="${PROMPT_FILE:-$ARIA_HOME/prompts/bull-put-spread.md}"
+# Full-scan mode (the default prompt) has a local prescreen shortlist to
+# validate the run's SCREENER_CONSTITUENTS/SIGNALS_COMPLETED/FINALISTS_VERIFIED
+# markers against. On-demand prompts (bull-put-spread-ror50.md,
+# verify-rr-gate.md — see their README usage) cover an explicit small ticker
+# list the user gave directly; they don't run against the universe/prescreen
+# at all and never emit those counters, so the full-scan validation gate below
+# would fail every valid on-demand report. Detect by comparing PROMPT_FILE to
+# the full-scan default, not by name-matching every alternate prompt file.
+if [ "$PROMPT_FILE" = "$ARIA_HOME/prompts/bull-put-spread.md" ]; then
+  FULL_SCAN_MODE=true
+else
+  FULL_SCAN_MODE=false
+fi
 HOLIDAYS_FILE="${HOLIDAYS_FILE:-$ARIA_HOME/us-market-holidays.txt}"
 # Phase B token-protection cap (scripts/prescreen.py --top-k): max entry_confirmed
 # tickers forwarded to IBKR verification. See prescreen.py's --top-k help for the
@@ -193,7 +206,12 @@ else
   # don't coincide, so ~2–3 weeks/year 19:00 IDT is 13:00 ET instead of 12:00 — the
   # window is deliberately defined in LOCAL time per the user's instruction,
   # keeping cron (19:00 local) and this check consistent year-round.
-  if [ "$HH" -ne 19 ]; then
+  # 10# forces base-10: date +%H zero-pads (08, 09), and bash arithmetic
+  # treats an unprefixed 08/09 as invalid octal -- the raw comparison below
+  # would then error inside the `if` (errexit doesn't apply there) and the
+  # failed test reads as false, silently OPENING the window gate for a
+  # manual/misscheduled run at 08:xx or 09:xx instead of skipping it.
+  if [ "$((10#$HH))" -ne 19 ]; then
     echo "[$RUN_TS] Outside 19:00–20:00 local execution window (current hour: $HH). Skip." >>"$ERR_FILE"
     exit 0
   fi
@@ -207,18 +225,22 @@ fi
 #      IBKR + compute_signal.py remain authoritative for every shortlisted name.
 # ===========================================================================
 PRESCREEN_FILE="$STATE_DIR/scratch/prescreen_${TODAY}.json"
-set +e
-timeout 10m python3 "$ARIA_HOME/scripts/prescreen.py" --output "$PRESCREEN_FILE" --top-k "$PRESCREEN_TOP_K" >>"$ERR_FILE" 2>&1
-PRESCREEN_EC=$?
-set -e
-if [ "$PRESCREEN_EC" -ne 0 ]; then
-  notify "ARIA scan FAILED" "prescreen failed — see stderr log"
-  send_telegram "🔴 ARIA scan FAILED / prescreen failed — ${TODAY}. Check $ERR_FILE."
-  echo "[$RUN_TS] FAILURE: prescreen exit code $PRESCREEN_EC" >>"$ERR_FILE"
-  exit 1
+if [ "$FULL_SCAN_MODE" = "true" ]; then
+  set +e
+  timeout 10m python3 "$ARIA_HOME/scripts/prescreen.py" --output "$PRESCREEN_FILE" --top-k "$PRESCREEN_TOP_K" >>"$ERR_FILE" 2>&1
+  PRESCREEN_EC=$?
+  set -e
+  if [ "$PRESCREEN_EC" -ne 0 ]; then
+    notify "ARIA scan FAILED" "prescreen failed — see stderr log"
+    send_telegram "🔴 ARIA scan FAILED / prescreen failed — ${TODAY}. Check $ERR_FILE."
+    echo "[$RUN_TS] FAILURE: prescreen exit code $PRESCREEN_EC" >>"$ERR_FILE"
+    exit 1
+  fi
+  SHORTLIST_COUNT="$(python3 -c "import json; print(len(json.load(open('$PRESCREEN_FILE'))['shortlist']))")"
+  EXPECTED_FINALISTS="$(python3 -c "import json; d=json.load(open('$PRESCREEN_FILE')); print(sum(1 for v in d['per_ticker'].values() if v.get('entry_confirmed')) + len(d['failures']))")"
+else
+  echo "[$RUN_TS] On-demand prompt ($PROMPT_FILE) — skipping universe prescreen." >>"$ERR_FILE"
 fi
-SHORTLIST_COUNT="$(python3 -c "import json; print(len(json.load(open('$PRESCREEN_FILE'))['shortlist']))")"
-EXPECTED_FINALISTS="$(python3 -c "import json; d=json.load(open('$PRESCREEN_FILE')); print(sum(1 for v in d['per_ticker'].values() if v.get('entry_confirmed')) + len(d['failures']))")"
 
 # ===========================================================================
 # 3. Headless Claude scan against data/universe.csv
@@ -322,6 +344,9 @@ FINALISTS_VERIFIED="$(grep -m1 '^FINALISTS_VERIFIED:' "$LOG_FILE" | grep -oE '[0
 # Membership check, not just cardinality: SCREENER_CONSTITUENTS must be exactly
 # the prescreen shortlist (sorted-list compare, so duplicates/substitutions fail
 # too) — a count-only check can't catch the prompt silently swapping tickers.
+# Full-scan-only: on-demand prompts have no PRESCREEN_FILE (skipped in section
+# 2.5) and no prescreen-derived shortlist to compare against.
+if [ "$FULL_SCAN_MODE" = "true" ]; then
 CONSTITUENTS_MATCH="$(python3 -c "
 import json, re, sys
 log = open('$LOG_FILE').read()
@@ -345,16 +370,34 @@ expected = sorted([t for t, v in d['per_ticker'].items() if v.get('entry_confirm
                    + [f['ticker'] for f in d['failures']])
 print('yes' if syms == expected else 'no')
 " 2>>"$ERR_FILE")"
-if [ "${CLAUDE_EC:-1}" = "0" ] \
-  && grep -q '^SCREENER_CONSTITUENTS:' "$LOG_FILE" \
-  && [ "$CONSTITUENTS_MATCH" = "yes" ] \
-  && [ -n "$SIGNALS_COMPLETED" ] && [ -n "$SIGNALS_FAILED" ] \
-  && [ "$SIGNALS_FAILED" = "0" ] \
-  && [ "$SIGNALS_COMPLETED" = "$SHORTLIST_COUNT" ] \
-  && [ -n "$FINALISTS_VERIFIED" ] \
-  && [ "$FINALISTS_VERIFIED" = "$EXPECTED_FINALISTS" ] \
-  && grep -q '^FINALISTS_VERIFIED_TICKERS:' "$LOG_FILE" \
-  && [ "$FINALISTS_MATCH" = "yes" ]; then
+fi
+if [ "$FULL_SCAN_MODE" = "true" ]; then
+  if [ "${CLAUDE_EC:-1}" = "0" ] \
+    && grep -q '^SCREENER_CONSTITUENTS:' "$LOG_FILE" \
+    && [ "$CONSTITUENTS_MATCH" = "yes" ] \
+    && [ -n "$SIGNALS_COMPLETED" ] && [ -n "$SIGNALS_FAILED" ] \
+    && [ "$SIGNALS_FAILED" = "0" ] \
+    && [ "$SIGNALS_COMPLETED" = "$SHORTLIST_COUNT" ] \
+    && [ -n "$FINALISTS_VERIFIED" ] \
+    && [ "$FINALISTS_VERIFIED" = "$EXPECTED_FINALISTS" ] \
+    && grep -q '^FINALISTS_VERIFIED_TICKERS:' "$LOG_FILE" \
+    && [ "$FINALISTS_MATCH" = "yes" ]; then
+    SCAN_OK=true
+  else
+    SCAN_OK=false
+  fi
+else
+  # On-demand prompts (bull-put-spread-ror50.md, verify-rr-gate.md) cover an
+  # explicit, small, user-given ticker list -- no prescreen shortlist/finalist
+  # counters exist to cross-check. Success is a clean exit plus the same
+  # SCREENER_CONSTITUENTS marker every prompt (full-scan or on-demand) emits.
+  if [ "${CLAUDE_EC:-1}" = "0" ] && grep -q '^SCREENER_CONSTITUENTS:' "$LOG_FILE"; then
+    SCAN_OK=true
+  else
+    SCAN_OK=false
+  fi
+fi
+if [ "$SCAN_OK" = "true" ]; then
   notify "ARIA scan ready ✓" "$TODAY — log saved"
   # Put the ACTUAL report (headline + PRIME/RADAR tables) into the message body,
   # not a generic line — and still attach the full file. Trimmed to stay under

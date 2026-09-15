@@ -36,6 +36,7 @@ needed --
 guards -- fires every 3 min across the Israel-local range the true 09:16-
 09:29 ET window can fall in across DST, self-gates internally below.)
 """
+import fcntl
 import os
 import re
 import sys
@@ -58,6 +59,8 @@ TODAY = date.today().isoformat()
 RUN_TS = datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z")
 LOG_FILE = LOG_DIR / f"{TODAY}_morning-briefing.md"
 ERR_FILE = LOG_DIR / f"{TODAY}_morning-briefing-stderr.log"
+SENT_MARKER = LOG_DIR / f"{TODAY}_morning-briefing.sent"
+LOCK_FILE = LOG_DIR / "morning-briefing.lock"
 
 
 def log_err(line: str) -> None:
@@ -68,8 +71,12 @@ def log_err(line: str) -> None:
 
 def load_env() -> dict:
     """Minimal .env parser (KEY=value lines, matches the bash guards'
-    `source .env` -- no python-dotenv dependency for a cron script)."""
-    env = {}
+    `source .env` -- no python-dotenv dependency for a cron script).
+    Starts from os.environ so values cron already exports (e.g. a
+    TELEGRAM_BOT_TOKEN set in the crontab itself, not just .env) aren't
+    silently dropped; .env entries override matching keys, same precedence
+    the bash guards get from `source .env` after inheriting the shell env."""
+    env = dict(os.environ)
     if not ENV_FILE.exists():
         return env
     for line in ENV_FILE.read_text(encoding="utf-8").splitlines():
@@ -111,6 +118,15 @@ def parse_exit_guard_report() -> dict:
     if not path.exists():
         return {"available": False}
     text = path.read_text(encoding="utf-8")
+    # exit-guard.sh writes the report header BEFORE Claude runs, so a file
+    # existing proves nothing about completion -- a crashed/partial run would
+    # otherwise look "available" with positions_checked silently missing.
+    # Require the literal last non-empty line to be POSITIONS_CHECKED: N,
+    # exactly what bull-put-spread-exit.md's prompt now hard-enforces as the
+    # final output line -- anything else means the run didn't finish clean.
+    non_empty_lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not non_empty_lines or not POSITIONS_CHECKED_RE.fullmatch(non_empty_lines[-1].strip()):
+        return {"available": False}
     positions_checked = None
     action_needed = []  # CLOSE or RECOMMEND EXIT
     watch_hold = []
@@ -212,19 +228,45 @@ def main() -> int:
     if not check_schedule_gate(force):
         return 0
 
-    env = load_env()
-    exit_report = parse_exit_guard_report()
-    macro = fetch_macro_facts()
-    message = format_message(macro, exit_report)
-
+    # Cron fires every 3 min across 09:16-09:29 ET to survive DST drift (see
+    # module docstring) -- that's up to 5 invocations landing inside the
+    # window on an ordinary day. A bare check-then-write on SENT_MARKER has a
+    # race if two invocations ever overlap (e.g. a slow Telegram call still
+    # in flight when the next 3-min tick fires) -- both could pass the check
+    # before either writes the marker. Hold an exclusive, non-blocking lock
+    # for the whole check-through-marker-write span; a run that can't get it
+    # just means another one is already actively handling today, so skip.
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    LOG_FILE.write_text(message + "\n", encoding="utf-8")
-
-    if send_telegram(message, env):
-        log_err("Done -- sent.")
+    lock_fd = open(LOCK_FILE, "a")
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        log_err("Another briefing run holds the lock -- skip.")
         return 0
-    log_err(f"Done -- Telegram send failed, report is in {LOG_FILE}.")
-    return 1
+
+    try:
+        # --force / FORCE_RUN bypasses this too, same as the schedule gate,
+        # so manual re-runs still work.
+        if not force and SENT_MARKER.exists():
+            log_err("Already sent today (marker present) -- skip.")
+            return 0
+
+        env = load_env()
+        exit_report = parse_exit_guard_report()
+        macro = fetch_macro_facts()
+        message = format_message(macro, exit_report)
+
+        LOG_FILE.write_text(message + "\n", encoding="utf-8")
+
+        if send_telegram(message, env):
+            SENT_MARKER.write_text(RUN_TS + "\n", encoding="utf-8")
+            log_err("Done -- sent.")
+            return 0
+        log_err(f"Done -- Telegram send failed, report is in {LOG_FILE}.")
+        return 1
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        lock_fd.close()
 
 
 if __name__ == "__main__":
