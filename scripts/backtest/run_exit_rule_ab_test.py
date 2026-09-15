@@ -147,8 +147,12 @@ def simulate_one(entry: pd.Series, price_df: pd.DataFrame, variant: dict) -> dic
             # breach lands on the last available bar, or the next session's
             # data is unusable).
             next_idx = idx + 1
-            if next_idx < len(dates):
-                d_exit = dates[next_idx]
+            # Scan forward for the first session with usable data, not just
+            # d+1 -- a single bad bar (holiday, data gap) at d+1 previously
+            # fell straight through to the expiry-date fallback below,
+            # skipping every other valid session between d+1 and expiry
+            # (CodeRabbit finding, 2026-09-15).
+            for d_exit in dates[next_idx:]:
                 S_exit = price_df.at[d_exit, "close"]
                 hv_exit = price_df.at[d_exit, "hv30"]
                 if not pd.isna(S_exit) and not pd.isna(hv_exit) and hv_exit > 0:
