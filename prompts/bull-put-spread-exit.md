@@ -75,6 +75,11 @@ connected."
      Write tool and passing `--input <path>` is required.
    - Run: `python3 $ARIA_HOME/scripts/compute_exit_signal.py --input $ARIA_HOME/state/scratch/signal_input_<TICKER>_exit.json --exclude-last-bar` (Bash).
      Settled read only — this report is not intraday-time-sensitive like the entry scan, so no provisional pass is needed.
+   - **If the response has `"insufficient_data": true`** (not enough price
+     history bars — a distinct, deliberately minimal response shape with no
+     `checks`/other technical fields): do not attempt to read `checks` or any
+     field this response doesn't carry. Treat this the same as `STRIKE_UNKNOWN`
+     in step 6 — the technical picture is unmeasured, not confirmed intact.
 
 3. **Get pricing & compute profit/DTE:**
    - Call `get_price_snapshot` on both legs (short put + long put).

@@ -149,12 +149,18 @@ under strict crash-insurance rules or relaxed peacetime rules:
    - Run:
      `python3 $ARIA_HOME/scripts/compute_exit_signal_v2.py --input $ARIA_HOME/state/scratch/signal_input_<TICKER>_exit.json --exclude-last-bar` (Bash).
      Settled read only — this report is not intraday-time-sensitive like the entry scan, so no provisional pass is needed.
+   - **If the response has `"insufficient_data": true`** (not enough price
+     history bars — a distinct, deliberately minimal response shape with no
+     `checks`/`premium_stop`/other technical fields): do not attempt to read
+     `checks` or any field this response doesn't carry. Treat this the same
+     as `STRIKE_UNKNOWN` in step 6 — the technical picture is unmeasured, not
+     confirmed intact.
    - Read the JSON output from `compute_exit_signal_v2.py`. Pay special attention to:
      * `regime`: "NEGATIVE" or "POSITIVE"
      * `stop_mode`: "HARD_STRUCTURAL" or "PREMIUM_MULTIPLE"
      * `thesis_invalidated`: boolean (already gated by active regime)
-     * `checks`: indicator breakdown (e.g. `short_strike_breached`, `broke_ma150_support`, `volume_confirmed_breakdown`)
-     * `premium_stop`: loss amount and threshold evaluation
+     * `checks`: indicator breakdown (e.g. `short_strike_breached`, `broke_ma150_support`, `volume_confirmed_breakdown`, `premium_stop_unknown`)
+     * `premium_stop`: loss amount and threshold evaluation. If `checks.premium_stop_unknown` is true (POSITIVE regime, couldn't evaluate — missing MTM data or invalid initial_credit), `thesis_invalidated` defaulted to False as an UNMEASURED state, not a verified-intact read — treat this the same as `STRIKE_UNKNOWN`/`PROFIT_UNKNOWN` in step 6.
 
 3. **Get pricing & compute profit/DTE:**
    - Call `get_price_snapshot` on both legs (short put + long put).
@@ -223,6 +229,7 @@ under strict crash-insurance rules or relaxed peacetime rules:
    - 🟠 **RECOMMEND EXIT (judgment/escalation layer — always with named reason code and one-line justification; NEVER forces CLOSE label; always evaluated even when no CLOSE trigger fired):**
      - `STRIKE_UNKNOWN` (fail-safe, checked first): `checks.short_strike_unknown` is true (the `short_strike` input was missing/null, so `thesis_invalidated` could not be evaluated — a `false` there means "not measured," not "confirmed intact"). Reason format: `STRIKE_UNKNOWN: short_strike was not provided — thesis could not be evaluated, risk is unmeasured. Verify manually.`
      - `PROFIT_UNKNOWN` (fail-safe, same treatment as `STRIKE_UNKNOWN`): `pct_max_profit_captured` is `unknown` per step 3 (entry-credit field was ambiguous, or either leg's current close-price lacked usable non-stale bid/ask). Reason format: `PROFIT_UNKNOWN: entry credit or current close pricing could not be read reliably ([which field(s)/leg(s) and why]) — profit/underwater state is unmeasured. Verify manually.` Overrides WATCH/HOLD; does NOT override the `thesis_invalidated`/`DTE < 0` CLOSE triggers above (neither depends on `pct_max_profit_captured`), but DOES suppress the two profit-dependent CLOSE triggers (80%-target, not-underwater time-stop) and the `TIME_RISK` tier below — none of those can be evaluated without a reliable current cost-to-close; if `STRIKE_UNKNOWN` also applies to the same position, both reason codes appear.
+     - `PREMIUM_STOP_UNKNOWN` (fail-safe, same treatment as `STRIKE_UNKNOWN` — POSITIVE regime only): `checks.premium_stop_unknown` is true (`premium_stop.evaluated` was false — missing mark-to-market data, or an invalid `initial_credit`). In this regime the premium-multiple stop IS the hard structural gate, so an unmeasured stop means `thesis_invalidated` was defaulted to False, not confirmed. Reason format: `PREMIUM_STOP_UNKNOWN: premium stop could not be evaluated (<premium_stop.reason>) in POSITIVE regime — thesis could not be checked against the 2.0x-credit hard stop, risk is unmeasured. Verify manually.` Overrides WATCH/HOLD; does NOT apply in NEGATIVE regime (which never uses `premium_stop` for its hard gate).
      - `MA150_BREACH` (advisory support breakdown): `checks.broke_ma150_support` is true AND `thesis_invalidated` is false.
        *Note on Regime Behavior:* In the POSITIVE regime, the underlying stock close may be below MA150 and even below the short strike without triggering a hard CLOSE (if loss <= 2.0x credit). In that scenario, `MA150_BREACH` surfaces here as RECOMMEND EXIT, ensuring the human operator is explicitly alerted to the technical deterioration even while the relaxed premium stop gives the position breathing room to mean-revert.
        Reason format: `MA150_BREACH: settled close ($<close>) below 150-day MA ($<ma150>), thesis_invalidated is false (<regime> regime). Advisory technical breakdown — human judgment call.`

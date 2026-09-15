@@ -41,10 +41,18 @@ Input (JSON via stdin or `--input <path>`):
   "ticker": str,
   "short_strike": float,
   "bars": [...],                      # ascending OHLCV dicts, or IBKR get_price_history parallel arrays
-  "initial_credit": float,            # REQUIRED: $ credit received at entry, per spread
+  "initial_credit": float,            # REQUIRED: $ credit received at entry, PER SHARE
   "entry_date": "YYYY-MM-DD",         # REQUIRED: entry date for as_of_date framing
-  "unrealized_pnl": float | null,     # live path: dollar P&L on the open spread (negative = losing)
-  "current_mark": float | null,       # backtest path: mark-to-market cost-to-close (used if unrealized_pnl is null)
+  "contracts": int | null,            # position size; defaults to 1. Used ONLY to normalize
+                                       # unrealized_pnl (see below) -- irrelevant otherwise.
+  "unrealized_pnl": float | null,     # live path: TOTAL position dollar P&L straight from IBKR's
+                                       # get_account_positions (negative = losing) -- already scaled
+                                       # by the 100x option multiplier AND contracts; normalized
+                                       # internally to per-share before comparing against
+                                       # initial_credit. Do not pre-normalize this yourself.
+  "current_mark": float | null,       # backtest path: PER-SHARE mark-to-market cost-to-close
+                                       # (used if unrealized_pnl is null) -- already per-share,
+                                       # not normalized.
   "gex_regime": dict | null,          # optional pre-computed gex_regime dict; if null, fetches via dix_fetcher_v2.latest()
   "pct_max_profit_captured": float | null, # optional pre-computed profit capture fraction (e.g. 0.85 = 85%)
   "dte": int | null                   # optional days to expiration for time-stop evaluation
@@ -69,6 +77,10 @@ Extends v1 output:
     "rsi_overbought": bool,
     "bearish_candle": bool,
     "candle_pattern": str,
+    "premium_stop_unknown": bool,        # POSITIVE regime only: true when premium_stop
+                                          # couldn't be evaluated (missing MTM data or invalid
+                                          # initial_credit) -- thesis_invalidated defaulted to
+                                          # False as an UNMEASURED state, not a verified read.
     "premium_stop_triggered": bool | null,
     "profit_target_triggered": bool | null,
     "time_stop_triggered": bool | null
@@ -125,6 +137,7 @@ from signal_core import (  # noqa: E402
     VOLUME_MA_LENGTH,
     bars_from_parallel_arrays,
     bearish_candle_pattern,
+    ema,
     rsi_series,
     sma,
 )
@@ -142,6 +155,7 @@ RSI_LENGTH = 20
 PROFIT_TARGET_THRESHOLD = 0.80
 TIME_STOP_MAX_DTE = 7
 PREMIUM_STOP_LOSS_MULTIPLE = 2.0
+CONTRACT_MULTIPLIER = 100.0
 
 
 def resolve_gex_regime(
@@ -209,7 +223,14 @@ def evaluate_exit_indicators(
     if rsis is None:
         rsis = rsi_series(closes, RSI_LENGTH)
     rsi_now = rsis[-1] if rsis else None
-    ma150 = sma(closes, 150)
+    # EMA, not SMA -- matches signal_core.py's 2026-09-14 dashboard-fidelity
+    # fix (all four ma150 = sma(...) call sites there switched to ema()
+    # after a real false-positive incident where SMA150 and the live
+    # TradingView dashboard's EMA150 disagreed on support by a full sign
+    # flip). This file's broke_ma150_support check was never updated to
+    # match, so it could show the same false reading on a live open
+    # position (CodeRabbit finding, 2026-09-15).
+    ma150 = ema(closes, 150)
     close = closes[-1]
 
     volumes = [b.get("volume", 0) for b in bars]
@@ -408,6 +429,31 @@ def compute_exit_signal_v2(
     unrealized_pnl = payload.get("unrealized_pnl")
     if unrealized_pnl is not None:
         unrealized_pnl = float(unrealized_pnl)
+        # unrealized_pnl straight from IBKR's get_account_positions is TOTAL
+        # position dollars -- already scaled by the 100x option multiplier
+        # AND by contract count. initial_credit/current_mark are per-share,
+        # per-spread figures the rest of this module compares it against.
+        # Left unnormalized, current_loss (evaluate_premium_stop) and
+        # pct_captured (evaluate_profit_target_and_time_stop) would compare
+        # a total-dollar loss against a per-share*2 threshold -- off by
+        # ~100x*contracts, which for any real position with contracts>=1
+        # makes the POSITIVE-regime premium stop misfire on essentially
+        # every open position regardless of actual health (CodeRabbit
+        # finding, 2026-09-15). Normalize down to the same per-share scale.
+        contracts = payload.get("contracts", 1)
+        try:
+            contracts = float(contracts) if contracts is not None else 1.0
+        except (TypeError, ValueError):
+            contracts = None
+        if contracts is not None and contracts > 0:
+            unrealized_pnl = unrealized_pnl / (CONTRACT_MULTIPLIER * contracts)
+        else:
+            # Malformed contracts -- can't safely normalize a total-dollar
+            # figure to per-share scale. Treat as unmeasured (matches this
+            # file's existing fail-safe style: evaluated=False with a
+            # reason, never a hard crash) rather than comparing mismatched
+            # units silently.
+            unrealized_pnl = None
 
     current_mark = payload.get("current_mark")
     if current_mark is not None:
@@ -458,6 +504,7 @@ def compute_exit_signal_v2(
     )
 
     # 5. Regime-gated thesis_invalidated decision
+    premium_stop_unknown = False
     if regime == "NEGATIVE":
         # Strict regime: short strike breach is the hard structural stop
         thesis_invalidated = bool(checks["short_strike_breached"])
@@ -467,8 +514,16 @@ def compute_exit_signal_v2(
         if premium_stop["evaluated"]:
             thesis_invalidated = bool(premium_stop["triggered"])
         else:
-            # Missing MTM data in relaxed mode: fall through without invalidating thesis
+            # Missing MTM data in relaxed mode (no unrealized_pnl/current_mark,
+            # or an invalid initial_credit): falls through without
+            # invalidating thesis, same as before -- but that "False" is a
+            # default, not a verified-safe read, and nothing previously
+            # surfaced the distinction. premium_stop_unknown makes it
+            # explicit so a caller can route it to manual review instead of
+            # silently trusting an unmeasured "intact" (CodeRabbit finding,
+            # 2026-09-15 -- same fail-safe pattern as short_strike_unknown).
             thesis_invalidated = False
+            premium_stop_unknown = True
 
     # 6. Profit target & Time stop evaluation
     profit_target, time_stop = evaluate_profit_target_and_time_stop(
@@ -479,6 +534,7 @@ def compute_exit_signal_v2(
     )
 
     # Augment checks dict with sub-trigger results
+    checks["premium_stop_unknown"] = premium_stop_unknown
     checks["premium_stop_triggered"] = premium_stop.get("triggered")
     checks["profit_target_triggered"] = profit_target.get("triggered")
     checks["time_stop_triggered"] = time_stop.get("triggered")
@@ -519,6 +575,9 @@ def run_self_tests() -> None:
       (b) with regime POSITIVE and close < short_strike but current_loss under 2x credit, thesis_invalidated is False.
       (c) with regime POSITIVE and current_loss over 2x credit, thesis_invalidated is True via stop_mode PREMIUM_MULTIPLE.
       (d) profit-target and time-stop triggers still fire identically regardless of regime.
+      (e) unrealized_pnl (total position dollars) normalizes by both the 100x
+          option multiplier and contracts count before comparing against
+          per-share initial_credit -- same result at 1 and 5 contracts.
     """
     print("=== [compute_exit_signal_v2] Running Self-Tests ===")
     failures = 0
@@ -573,7 +632,12 @@ def run_self_tests() -> None:
         "short_strike": short_strike,
         "initial_credit": initial_credit,
         "entry_date": "2026-05-01",
-        "unrealized_pnl": -0.50,  # loss is 0.50x credit (< 2x)
+        "contracts": 1,
+        # unrealized_pnl is TOTAL position dollars (IBKR convention, 100x
+        # multiplier * contracts) -- -50.0 normalizes to -0.50/share, a
+        # 0.50x-credit loss (< 2x threshold, though NEGATIVE regime doesn't
+        # gate on this anyway).
+        "unrealized_pnl": -50.0,
         "current_mark": None,
         "gex_regime": neg_regime_dict,
         "bars": synthetic_bars,
@@ -599,7 +663,9 @@ def run_self_tests() -> None:
         "short_strike": short_strike,
         "initial_credit": initial_credit,
         "entry_date": "2026-05-01",
-        "unrealized_pnl": -1.50,  # loss is 1.50 <= 2.0x credit
+        "contracts": 1,
+        # -150.0 total dollars normalizes to -1.50/share (<= 2.0x credit).
+        "unrealized_pnl": -150.0,
         "current_mark": None,
         "gex_regime": pos_regime_dict,
         "bars": synthetic_bars,
@@ -627,7 +693,9 @@ def run_self_tests() -> None:
         "short_strike": short_strike,
         "initial_credit": initial_credit,
         "entry_date": "2026-05-01",
-        "unrealized_pnl": -2.50,  # loss is 2.50 > 2.0 * 1.00
+        "contracts": 1,
+        # -250.0 total dollars normalizes to -2.50/share (> 2.0 * 1.00 credit).
+        "unrealized_pnl": -250.0,
         "current_mark": None,
         "gex_regime": pos_regime_dict,
         "bars": synthetic_bars,
@@ -702,9 +770,41 @@ def run_self_tests() -> None:
         print("[FAIL] (d) Mismatch in regime-invariance for profit target or time stop triggers")
         failures += 1
 
+    # -------------------------------------------------------------------------
+    # Test (e): unrealized_pnl normalization across contracts -- same per-share
+    # economics as test (c) (loss 2.50/share > 2.0x credit) but at 5 contracts,
+    # so the raw total-dollar figure is 5x larger. Must normalize to the same
+    # current_loss/threshold/triggered result as the 1-contract case, proving
+    # the contracts divisor (not just the 100x multiplier) is applied
+    # correctly (CodeRabbit finding, 2026-09-15).
+    # -------------------------------------------------------------------------
+    payload_e = {
+        "ticker": "TEST_E",
+        "short_strike": short_strike,
+        "initial_credit": initial_credit,
+        "entry_date": "2026-05-01",
+        "contracts": 5,
+        "unrealized_pnl": -1250.0,  # -250.0 * 5 contracts
+        "current_mark": None,
+        "gex_regime": pos_regime_dict,
+        "bars": synthetic_bars,
+    }
+    res_e = compute_exit_signal_v2(payload_e)
+    cond_e = (
+        res_e["premium_stop"]["current_loss"] == 2.50
+        and res_e["premium_stop"]["threshold"] == 2.00
+        and res_e["premium_stop"]["triggered"] is True
+        and res_e["thesis_invalidated"] is True
+    )
+    if cond_e:
+        print("[PASS] (e) unrealized_pnl normalizes by contracts, not just the 100x multiplier")
+    else:
+        print(f"[FAIL] (e) Expected contracts-normalized current_loss=2.50, got: {res_e}")
+        failures += 1
+
     print("--------------------------------------------------")
     if failures == 0:
-        print("ALL ASSERTIONS PASSED (4/4)")
+        print("ALL ASSERTIONS PASSED (5/5)")
     else:
         print(f"FAILED: {failures} assertion(s) failed.")
         sys.exit(1)
