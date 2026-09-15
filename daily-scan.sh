@@ -35,15 +35,25 @@ PROMPT_FILE="${PROMPT_FILE:-$ARIA_HOME/prompts/bull-put-spread.md}"
 # Full-scan mode (the default prompt) has a local prescreen shortlist to
 # validate the run's SCREENER_CONSTITUENTS/SIGNALS_COMPLETED/FINALISTS_VERIFIED
 # markers against. On-demand prompts (bull-put-spread-ror50.md,
-# verify-rr-gate.md — see their README usage) cover an explicit small ticker
-# list the user gave directly; they don't run against the universe/prescreen
-# at all and never emit those counters, so the full-scan validation gate below
-# would fail every valid on-demand report. Detect by comparing PROMPT_FILE to
-# the full-scan default, not by name-matching every alternate prompt file.
+# verify-rr-gate.md, smoke-test.md — see README usage) cover an explicit
+# small ticker list the user gave directly; they don't run against the
+# universe/prescreen at all and never emit those counters, so the full-scan
+# validation gate below would fail every valid on-demand report.
+# Explicit allowlist, not "anything that isn't the full-scan default" --
+# an unrecognized PROMPT_FILE (typo, stale path) previously fell through to
+# on-demand mode silently, skipping the structural validation gate entirely
+# instead of failing loudly (CodeRabbit finding, 2026-09-15).
 if [ "$PROMPT_FILE" = "$ARIA_HOME/prompts/bull-put-spread.md" ]; then
   FULL_SCAN_MODE=true
-else
+elif [ "$PROMPT_FILE" = "$ARIA_HOME/prompts/bull-put-spread-ror50.md" ] \
+  || [ "$PROMPT_FILE" = "$ARIA_HOME/prompts/verify-rr-gate.md" ] \
+  || [ "$PROMPT_FILE" = "$ARIA_HOME/prompts/smoke-test.md" ]; then
   FULL_SCAN_MODE=false
+else
+  echo "ERROR: PROMPT_FILE=$PROMPT_FILE is not a recognized daily-scan.sh prompt." >&2
+  echo "Expected one of: bull-put-spread.md (full-scan), bull-put-spread-ror50.md," >&2
+  echo "verify-rr-gate.md, smoke-test.md (on-demand). Refusing to run unvalidated." >&2
+  exit 1
 fi
 HOLIDAYS_FILE="${HOLIDAYS_FILE:-$ARIA_HOME/us-market-holidays.txt}"
 # Phase B token-protection cap (scripts/prescreen.py --top-k): max entry_confirmed
