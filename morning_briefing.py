@@ -111,6 +111,7 @@ POSITION_LINE_RE = re.compile(
     r"^(?P<ticker>\S+).*\|\s*verdict=(?P<verdict>[A-Z ]+?)\s*\|\s*reason=(?P<reason>.*)$"
 )
 POSITIONS_CHECKED_RE = re.compile(r"^POSITIONS_CHECKED:\s*(\d+)")
+UNPAIRED_LEGS_RE = re.compile(r"^UNPAIRED_LEGS:\s*(\d+)")
 
 
 def parse_exit_guard_report() -> dict:
@@ -128,6 +129,7 @@ def parse_exit_guard_report() -> dict:
     if not non_empty_lines or not POSITIONS_CHECKED_RE.fullmatch(non_empty_lines[-1].strip()):
         return {"available": False}
     positions_checked = None
+    unpaired_legs = None  # None = marker absent from an otherwise-complete report
     action_needed = []  # CLOSE or RECOMMEND EXIT
     watch_hold = []
     for line in text.splitlines():
@@ -135,10 +137,21 @@ def parse_exit_guard_report() -> dict:
         if m:
             positions_checked = int(m.group(1))
             continue
+        m = UNPAIRED_LEGS_RE.match(line.strip())
+        if m:
+            unpaired_legs = int(m.group(1))
+            continue
         m = POSITION_LINE_RE.match(line.strip())
         if m:
             verdict = m.group("verdict").strip()
-            entry = {"ticker": m.group("ticker"), "verdict": verdict, "reason": m.group("reason").strip()}
+            reason = m.group("reason").strip()
+            # MA150_BREACH reasons in particular carry a paragraph of backtest
+            # justification (see bull-put-spread-exit.md) -- truncate here so
+            # a couple of flagged positions can't blow the whole message past
+            # Telegram's length cap (see format_message's own backstop too).
+            if len(reason) > 200:
+                reason = reason[:200] + "... [truncated, see report]"
+            entry = {"ticker": m.group("ticker"), "verdict": verdict, "reason": reason}
             if verdict in ("CLOSE", "RECOMMEND EXIT"):
                 action_needed.append(entry)
             else:
@@ -146,6 +159,7 @@ def parse_exit_guard_report() -> dict:
     return {
         "available": True,
         "positions_checked": positions_checked,
+        "unpaired_legs": unpaired_legs,
         "action_needed": action_needed,
         "watch_hold": watch_hold,
     }
@@ -211,9 +225,24 @@ def format_message(macro: str, exit_report: dict, gtc_report: dict) -> str:
         n = exit_report["positions_checked"]
         lines.append(f"OPEN POSITIONS: {n if n is not None else 'unknown'}")
         lines.append("")
-        if exit_report["action_needed"]:
+        unpaired = exit_report["unpaired_legs"]
+        action_lines = list(exit_report["action_needed"])
+        if unpaired:
+            action_lines.append({
+                "ticker": "UNPAIRED",
+                "verdict": "VERIFY MANUALLY",
+                "reason": f"{unpaired} unpaired/ambiguous option leg(s) found -- see "
+                          f"{LOG_DIR / f'{TODAY}_exit-guard.md'} for detail",
+            })
+        elif unpaired is None:
+            action_lines.append({
+                "ticker": "UNPAIRED",
+                "verdict": "VERIFY MANUALLY",
+                "reason": "unpaired-leg count unavailable (marker missing from report) -- verify manually",
+            })
+        if action_lines:
             lines.append("\U0001F534 ACTION NEEDED AT THE OPEN:")
-            for p in exit_report["action_needed"]:
+            for p in action_lines:
                 lines.append(f"  {p['ticker']}: {p['verdict']} -- {p['reason']}")
         else:
             lines.append("✅ No CLOSE / RECOMMEND EXIT flags today.")
@@ -296,6 +325,13 @@ def main() -> int:
         message = format_message(macro, exit_report, gtc_report)
 
         LOG_FILE.write_text(message + "\n", encoding="utf-8")
+
+        # Telegram caps messages at 4096 chars; per-reason truncation above
+        # handles the common case, this is the hard backstop so a send never
+        # silently fails on length -- mirrors exit-guard.sh's own truncation
+        # guard for the same limit.
+        if len(message) > 3900:
+            message = message[:3900] + f"\n\n⚠️ TRUNCATED -- full report: {LOG_FILE}"
 
         if send_telegram(message, env):
             SENT_MARKER.write_text(RUN_TS + "\n", encoding="utf-8")
