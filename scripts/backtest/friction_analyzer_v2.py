@@ -42,6 +42,13 @@ DEFAULT_INITIAL_CAPITAL = 1_000_000.0
 ORDER_SIDES = {"buy", "sell", "close"}
 SETTLEMENT_SIDES = {"exercise", "expire", "early_exercise"}
 TERMINAL_SIDES = {"close"} | SETTLEMENT_SIDES
+# options_portfolio.py's margin-reservation gate writes one "rejected_margin"
+# row (no real legs, qty=0) per signal it refuses to open -- a real side
+# value, not a data error. This run's config is verified to keep the count
+# at 0 (see DEFAULT_INITIAL_CAPITAL comment above), but treating it as
+# "unknown" would still hard-crash the whole analysis on a future run where
+# it isn't. No commission/slippage/P&L applies -- nothing ever filled.
+NON_FILL_SIDES = {"rejected_margin"}
 
 
 def number(value):
@@ -130,7 +137,7 @@ def analyze(args):
     if set(exits) - set(entries):
         raise ValueError("Exit records without matching entries")
     sides = Counter(r["side"] for r in trades)
-    unknown = set(sides) - ORDER_SIDES - SETTLEMENT_SIDES
+    unknown = set(sides) - ORDER_SIDES - SETTLEMENT_SIDES - NON_FILL_SIDES
     if unknown:
         raise ValueError(f"Unknown sides; review cost classification before proceeding: {unknown}")
     grouped = defaultdict(list)
@@ -140,10 +147,17 @@ def analyze(args):
         grouped[key(trade)].append(trade)
 
     results = []
+    skipped_margin_rejected = []
     for k, entry in entries.items():
         legs = grouped[k]
         opening = [r for r in legs if r["side"] in {"buy", "sell"}]
         terminal = [r for r in legs if r["side"] in TERMINAL_SIDES]
+        if legs and all(r["side"] in NON_FILL_SIDES for r in legs):
+            # Margin-rejected: no real legs ever filled for this entry. Exclude
+            # from the two-leg assertion and every P&L/commission/slippage
+            # aggregate below -- there's nothing to charge friction against.
+            skipped_margin_rejected.append(k)
+            continue
         # This draft covers the verified one-contract vertical dataset. Reject
         # changed sizing rather than silently mixing per-contract and total P&L.
         if (len(opening) != 2 or {r["side"] for r in opening} != {"buy", "sell"}
@@ -244,6 +258,9 @@ def analyze(args):
           f"| slippage=${args.slippage_per_share:.4f}/share/leg")
     print(f"Observed sides: {dict(sides)}; metrics.trade_count={metrics['trade_count']} (LEGS)")
     print(f"Position status: {dict(Counter(r['position_status'] for r in results))}")
+    if skipped_margin_rejected:
+        print(f"Skipped (margin-rejected, no fill, excluded from all aggregates below): "
+              f"{len(skipped_margin_rejected)} of {len(entries)} entries")
     print(f"{'Measure':<53} {'Gross':>19} {'After friction':>19}")
     comparison = [
         ("Total opened spreads", len(results), len(results), False),
