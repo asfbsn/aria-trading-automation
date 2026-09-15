@@ -55,6 +55,9 @@ def main():
         })
 
     n = len(events)
+    if n == 0:
+        print("No matched breach events -- nothing to compute.")
+        return
     n_recover = sum(1 for e in events if e["recover"])
     n_bleed = n - n_recover
     base_rate = n_recover / n

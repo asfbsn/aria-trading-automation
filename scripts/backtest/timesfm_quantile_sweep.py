@@ -74,6 +74,10 @@ def main():
             "recover": r_nostop["reason"] in ("TP", "EXPIRY_PROFIT"),
         })
 
+    if not events:
+        print("No breach events matched -- nothing to sweep.")
+        return
+
     print(f"Matched breach events: {len(events)}", flush=True)
 
     for start in range(0, len(events), BATCH_SIZE):
@@ -107,6 +111,10 @@ def main():
         print(f"threshold={t:.1f}: n_hold={n_hold:4d}  precision={prec:.1%}  recall={rec:.1%}")
         if n_hold >= 20 and (best is None or prec > best[1]):
             best = (t, prec, rec, n_hold)
+
+    if best is None:
+        print("\nNo threshold reached n_hold>=20; sweep inconclusive.")
+        return
 
     print(f"\nBest threshold (n_hold>=20): t={best[0]}, precision={best[1]:.1%}, "
           f"recall={best[2]:.1%}, n_hold={best[3]}")
