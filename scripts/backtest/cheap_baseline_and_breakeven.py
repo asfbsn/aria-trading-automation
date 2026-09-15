@@ -66,6 +66,10 @@ def main():
     # --- Breakeven precision ---
     gains = [e["pnl_nostop"] - e["pnl_locked"] for e in events if e["recover"]]
     costs = [e["pnl_locked"] - e["pnl_nostop"] for e in events if not e["recover"]]
+    if not gains or not costs:
+        print("\nOne side of the split is empty (recover or bleed count is 0) -- "
+              "breakeven precision is undefined; stopping.")
+        return
     avg_gain = float(np.mean(gains))
     avg_cost = float(np.mean(costs))
     breakeven_p = avg_cost / (avg_gain + avg_cost)
