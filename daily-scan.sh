@@ -160,11 +160,16 @@ send_telegram() {
   if [ -z "$tok" ] || [ -z "$chat" ]; then
     echo "[$RUN_TS] Telegram not configured; skipping." >>"$ERR_FILE"; return 0
   fi
-  curl -s -m 30 "https://api.telegram.org/bot${tok}/sendMessage" \
+  # The token-bearing URL goes through -K (a curl config file, here a
+  # process substitution) instead of argv -- "bot<TOKEN>/..." as a literal
+  # curl argument is visible to any other local user via `ps`/
+  # `/proc/<pid>/cmdline` for curl's runtime (CodeRabbit finding, same
+  # pattern already fixed in research-reminder.sh 2026-08-31).
+  curl -s -m 30 -K <(printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$tok") \
     --data-urlencode "chat_id=${chat}" \
     --data-urlencode "text=${msg}" >/dev/null 2>>"$ERR_FILE" || true
   if [ -n "$file" ] && [ -f "$file" ]; then
-    curl -s -m 60 "https://api.telegram.org/bot${tok}/sendDocument" \
+    curl -s -m 60 -K <(printf 'url = "https://api.telegram.org/bot%s/sendDocument"\n' "$tok") \
       -F "chat_id=${chat}" -F "document=@${file}" \
       -F "caption=ARIA Bull Put Spread report — ${TODAY}" >/dev/null 2>>"$ERR_FILE" || true
   fi

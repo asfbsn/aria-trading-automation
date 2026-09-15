@@ -71,9 +71,14 @@ send_telegram() {
   # branches on this (see gtc-guard.sh) sees the truth. Callers here run
   # under `set +e` already (see the block below), so a non-zero return
   # can't take the rest of the script down with it.
+  # The token-bearing URL goes through -K (a curl config file, here a
+  # process substitution) instead of argv -- "bot<TOKEN>/sendMessage" as a
+  # literal curl argument is visible to any other local user via `ps`/
+  # `/proc/<pid>/cmdline` for the curl process's runtime (CodeRabbit
+  # finding, same pattern already fixed in research-reminder.sh 2026-08-31).
   local response http_code body curl_ec
   response="$(curl -sS -m 30 -w $'\n%{http_code}' \
-    "https://api.telegram.org/bot${tok}/sendMessage" \
+    -K <(printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$tok") \
     --data-urlencode "chat_id=${chat}" \
     --data-urlencode "text=${msg}" 2>>"$ERR_FILE")"
   curl_ec=$?
