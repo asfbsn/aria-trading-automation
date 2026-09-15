@@ -211,7 +211,16 @@ def main():
             above_ma150_pct = (close - ma150) / ma150
             cond_a = close > (ma150 * 0.99)
             cond_b = (-0.015 <= below_ma50_pct <= 0.115) and (-0.015 <= above_ma150_pct <= 0.115)
-            if cond_a and cond_b:
+            # entry_checks()'s DEFAULT_GATE_KEYS never requires
+            # near_ma50_pullback, so a genuinely 5-of-5-confirmed ticker can
+            # sit outside this MA50 band (e.g. well above ma50*1.115) and
+            # still be entry_confirmed=True. The shortlist rule is
+            # deliberately over-inclusive (module docstring) -- silently
+            # dropping an already-confirmed name here contradicts that
+            # contract and would hide a real signal from Phase B entirely
+            # (CodeRabbit finding, 2026-09-15). A confirmed result always
+            # bypasses the band test.
+            if (cond_a and cond_b) or entry_confirmed:
                 shortlist.append(ticker)
                 rsi_raw_by_ticker[ticker] = rsi_now
                 per_ticker[ticker] = {
