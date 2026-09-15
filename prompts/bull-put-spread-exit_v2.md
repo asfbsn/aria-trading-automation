@@ -158,10 +158,31 @@ under strict crash-insurance rules or relaxed peacetime rules:
 
 3. **Get pricing & compute profit/DTE:**
    - Call `get_price_snapshot` on both legs (short put + long put).
-   - Compute mid prices: `mid = (bid + ask) / 2` (or last if bid/ask unavailable).
+   - Compute mid prices only when both legs have valid, non-crossed bid/ask
+     data (`0 < bid <= ask`): `mid = (bid + ask) / 2`. This guard runs before
+     the options market's regular session — a leg with missing/stale bid-ask
+     can leave only a `last` value carried over from the prior session. Do
+     NOT substitute `last` for `mid` on either leg for the profit/underwater
+     computation below: a stale last price silently mixed into
+     `cost_to_close` can falsely trigger the mandatory 80% CLOSE, falsely
+     clear the not-underwater time-stop, or falsely suppress a real one. If
+     either leg lacks usable bid/ask, set `pct_max_profit_captured: unknown`
+     and skip straight to the `PROFIT_UNKNOWN` fail-safe tier in step 6
+     instead — `last` may still be reported as context in the position's
+     output row, just never fed into a mandatory-CLOSE calculation
+     (CodeRabbit finding, 2026-09-15, same fix already applied to
+     bull-put-spread-exit.md).
    - Compute current cost-to-close = `short_mid - long_mid`.
+   - **Sanity-check the combined value, not just each leg individually**:
+     `cost_to_close` must be `>= 0` and `<= (short_strike - long_strike)` (a
+     valid put credit spread's cost to close can never be negative or exceed
+     the spread's own width). Both legs individually passing the bid/ask
+     validity check above does not guarantee this. If `cost_to_close` fails
+     this bound, treat it the same as missing bid/ask: set
+     `pct_max_profit_captured: unknown` and go to `PROFIT_UNKNOWN`.
    - Read the position's entry credit from `get_account_positions`' average cost / average price / net premium field.
-   - Compute `pct_max_profit_captured = (entry_credit - current_cost_to_close) / entry_credit`.
+   - **If the entry-credit field is ambiguous** (multiple candidate fields disagree, the sign convention isn't clear, or you can't state a single reliably-correct entry_credit number): do NOT guess and compute anyway. Set `pct_max_profit_captured: unknown` and skip straight to the `PROFIT_UNKNOWN` fail-safe tier in step 6.
+   - Otherwise, compute `pct_max_profit_captured = (entry_credit - current_cost_to_close) / entry_credit`.
    - Compute DTE (days to expiration) from the position's expiration date vs today's date.
    - Compute defined max loss per share = `(short_strike - long_strike) - entry_credit` (and total position max loss = `max_loss_per_share * 100 * contracts`).
 
@@ -195,23 +216,24 @@ under strict crash-insurance rules or relaxed peacetime rules:
        * In **POSITIVE regime** (relaxed mode): fired because `current_loss > 2.0 * initial_credit` (`premium_stop.triggered == true`).
          Reason: `Thesis invalidated (POSITIVE regime: loss $<current_loss> > 2.0x credit $<threshold>)`.
        OR
-     - `pct_max_profit_captured >= 0.80` (80% profit target reached — buy back at 20% of credit; default baseline GTC target; identical in both regimes), OR
-     - `DTE < 0` (already past expiration — settlement/assignment is happening or has happened; closes REGARDLESS of profit/loss; identical in both regimes). Reason: `Time stop: DTE < 0, already past expiration — resolve immediately`. OR
-     - `0 <= DTE <= 7` AND the position is NOT underwater (`pct_max_profit_captured >= 0` — breakeven or any profit level counts as not underwater here; identical in both regimes). Reason: `Time stop: DTE <= 7 with profit captured / not underwater`.
+     - `pct_max_profit_captured` is KNOWN (not `unknown`, see step 3) AND `>= 0.80` (80% profit target reached — buy back at 20% of credit; default baseline GTC target; identical in both regimes), OR
+     - `DTE < 0` (already past expiration — settlement/assignment is happening or has happened; closes REGARDLESS of profit/loss, including when `pct_max_profit_captured` is unknown; identical in both regimes). Reason: `Time stop: DTE < 0, already past expiration — resolve immediately`. OR
+     - `pct_max_profit_captured` is KNOWN AND `0 <= DTE <= 7` AND the position is NOT underwater (`pct_max_profit_captured >= 0` — breakeven or any profit level counts as not underwater here; identical in both regimes). Reason: `Time stop: DTE <= 7 with profit captured / not underwater`.
 
    - 🟠 **RECOMMEND EXIT (judgment/escalation layer — always with named reason code and one-line justification; NEVER forces CLOSE label; always evaluated even when no CLOSE trigger fired):**
      - `STRIKE_UNKNOWN` (fail-safe, checked first): `checks.short_strike_unknown` is true (the `short_strike` input was missing/null, so `thesis_invalidated` could not be evaluated — a `false` there means "not measured," not "confirmed intact"). Reason format: `STRIKE_UNKNOWN: short_strike was not provided — thesis could not be evaluated, risk is unmeasured. Verify manually.`
+     - `PROFIT_UNKNOWN` (fail-safe, same treatment as `STRIKE_UNKNOWN`): `pct_max_profit_captured` is `unknown` per step 3 (entry-credit field was ambiguous, or either leg's current close-price lacked usable non-stale bid/ask). Reason format: `PROFIT_UNKNOWN: entry credit or current close pricing could not be read reliably ([which field(s)/leg(s) and why]) — profit/underwater state is unmeasured. Verify manually.` Overrides WATCH/HOLD; does NOT override the `thesis_invalidated`/`DTE < 0` CLOSE triggers above (neither depends on `pct_max_profit_captured`), but DOES suppress the two profit-dependent CLOSE triggers (80%-target, not-underwater time-stop) and the `TIME_RISK` tier below — none of those can be evaluated without a reliable current cost-to-close; if `STRIKE_UNKNOWN` also applies to the same position, both reason codes appear.
      - `MA150_BREACH` (advisory support breakdown): `checks.broke_ma150_support` is true AND `thesis_invalidated` is false.
        *Note on Regime Behavior:* In the POSITIVE regime, the underlying stock close may be below MA150 and even below the short strike without triggering a hard CLOSE (if loss <= 2.0x credit). In that scenario, `MA150_BREACH` surfaces here as RECOMMEND EXIT, ensuring the human operator is explicitly alerted to the technical deterioration even while the relaxed premium stop gives the position breathing room to mean-revert.
        Reason format: `MA150_BREACH: settled close ($<close>) below 150-day MA ($<ma150>), thesis_invalidated is false (<regime> regime). Advisory technical breakdown — human judgment call.`
      - `EARNINGS_RISK`: The position's next confirmed earnings date falls before its expiration date AND the underlying's close is within 5% of the short strike (`close <= short_strike * 1.05`). Reason format: `EARNINGS_RISK: earnings on <date> before expiry <exp_date> with close ($<close>) within 5% of short strike ($<short_strike>)`. If earnings date is unknown, do not trigger `EARNINGS_RISK`; note "earnings: unknown — verify manually".
-     - `TIME_RISK`: `0 <= DTE <= 7` (not negative — an expired position is already a hard CLOSE above, this tier never applies to it) AND the position IS underwater (`pct_max_profit_captured < 0`) AND `thesis_invalidated` is false (thesis still intact). Reason format: `TIME_RISK: DTE=<n> <= 7 and underwater (captured=<pct>%), but thesis intact. Defined max loss is $<max_loss_per_share> ($<total_max_loss> total, capped). Holding into final week is a deliberate bet on reversal, not blind hope.`
+     - `TIME_RISK`: `pct_max_profit_captured` is KNOWN AND `0 <= DTE <= 7` (not negative — an expired position is already a hard CLOSE above, this tier never applies to it) AND the position IS underwater (`pct_max_profit_captured < 0`) AND `thesis_invalidated` is false (thesis still intact). Reason format: `TIME_RISK: DTE=<n> <= 7 and underwater (captured=<pct>%), but thesis intact. Defined max loss is $<max_loss_per_share> ($<total_max_loss> total, capped). Holding into final week is a deliberate bet on reversal, not blind hope.`
 
    - 🟡 **WATCH (unchanged):**
      - `thesis_invalidated` is false, no RECOMMEND EXIT trigger, but `rsi_overbought` is true (RSI > 70) OR `bearish_candle` is true (`shooting_star` or `bearish_engulfing`) — discretionary reversal signal, does not force a close.
 
    - 🟢 **HOLD:**
-     - None of the above (thesis intact, `short_strike_unknown` is false, profit < 80%, DTE > 7, no earnings risk, momentum/candles intact).
+     - None of the above (thesis intact, `short_strike_unknown` is false, `pct_max_profit_captured` known and < 80%, DTE > 7, no earnings risk, momentum/candles intact).
 
 ---
 
@@ -228,7 +250,7 @@ Bull Put Spread Exit Guard (v2) — <date>
 
 Line format for each position:
 `[Ticker] [short_strike]/[long_strike] exp=[date] DTE=[n] | captured=[pct]% | regime=[NEGATIVE/POSITIVE] | verdict=[CLOSE/RECOMMEND EXIT/WATCH/HOLD] | reason=[why, including any reason code, stop mode, and annotations]`
-(`[pct]` = `pct_max_profit_captured * 100`, e.g. a ratio of 0.35 displays as "35", not "0.35" — the underlying ratio is still what all threshold comparisons above use.)
+(`[pct]` = `pct_max_profit_captured * 100`, e.g. a ratio of 0.35 displays as "35", not "0.35" — the underlying ratio is still what all threshold comparisons above use. If `pct_max_profit_captured` is `unknown` per step 3, display `captured=unknown` instead of a number.)
 
 If a premarket note applies (meaningful move vs strike/MA150 or data unavailable), place it on its own line directly after that position's main verdict line, before moving to the next position:
 `  PREMARKET NOTE: [settled close, live price, and movement vs strike/MA150, or "premarket price: unavailable — verify manually"]`

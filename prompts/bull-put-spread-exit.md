@@ -78,8 +78,30 @@ connected."
 
 3. **Get pricing & compute profit/DTE:**
    - Call `get_price_snapshot` on both legs (short put + long put).
-   - Compute mid prices: `mid = (bid + ask) / 2` (or last if bid/ask unavailable).
+   - Compute mid prices only when both legs have valid, non-crossed bid/ask
+     data (`0 < bid <= ask`): `mid = (bid + ask) / 2`. This guard runs before
+     the options market's regular session — a leg with missing/stale bid-ask
+     can leave only a `last` value that's carried over from the prior
+     session. Do NOT substitute `last` for `mid` on either leg for the
+     profit/underwater computation below: a stale last price silently
+     mixed into `cost_to_close` can falsely trigger the mandatory 80%
+     CLOSE, falsely clear the not-underwater time-stop, or falsely suppress
+     a real one. If either leg lacks usable bid/ask, set
+     `pct_max_profit_captured: unknown` and skip straight to the
+     `PROFIT_UNKNOWN` fail-safe tier in step 6 instead — `last` may still be
+     reported as context in the position's output row, just never fed into
+     a mandatory-CLOSE calculation.
    - Compute current cost-to-close = `short_mid - long_mid`.
+   - **Sanity-check the combined value, not just each leg individually**:
+     `cost_to_close` must be `>= 0` and `<= (short_strike - long_strike)` (a
+     valid put credit spread's cost to close can never be negative or exceed
+     the spread's own width). Both legs individually passing the bid/ask
+     validity check above does not guarantee this — e.g. quotes pulled at
+     slightly different instants during an illiquid open, or a genuinely bad
+     print on one leg, can still produce a nonsensical combined value. If
+     `cost_to_close` fails this bound, treat it the same as missing bid/ask:
+     set `pct_max_profit_captured: unknown` and go to `PROFIT_UNKNOWN`,
+     never feed it into the profit-based CLOSE logic.
    - Read the position's entry credit from `get_account_positions`' average cost / average price / net premium field (read whatever field IBKR actually returns, do not assume a field name).
    - **If the entry-credit field is ambiguous** (multiple candidate fields disagree, the sign convention for a short spread's average cost isn't clear from the response, the value looks like it's per-share vs per-contract vs including commissions and you can't tell which, or any other reason you can't state a single reliably-correct entry_credit number): do NOT guess and compute anyway. Set `pct_max_profit_captured: unknown` and skip straight to the `PROFIT_UNKNOWN` fail-safe tier in step 6 — a wrong sign or wrong scale here can falsely trigger the mandatory 80%-captured CLOSE, falsely mark an underwater position as not-underwater (also a CLOSE trigger), or falsely suppress a real one. Report exactly which field(s) you saw and why they were ambiguous.
    - Otherwise, compute `pct_max_profit_captured = (entry_credit - current_cost_to_close) / entry_credit`.
@@ -118,7 +140,7 @@ connected."
 
    - 🟠 **RECOMMEND EXIT (judgment/escalation layer — always with named reason code and one-line justification; NEVER forces CLOSE label; always evaluated even when no CLOSE trigger fired):**
      - `STRIKE_UNKNOWN` (fail-safe, checked first): `checks.short_strike_unknown` is true (the `short_strike` input was missing/null, so `thesis_invalidated` could not be evaluated — a `false` there means "not measured," not "confirmed intact"). Reason format: `STRIKE_UNKNOWN: short_strike was not provided — thesis could not be evaluated, risk is unmeasured. Verify manually.` This overrides WATCH/HOLD for this position regardless of any other check's result; it does NOT override a CLOSE trigger above, since those don't depend on `short_strike` being known (time-stop, profit-target) except the strike-breach CLOSE itself, which is also unmeasured in this state — treat as RECOMMEND EXIT, not CLOSE, since a breach can't be confirmed either.
-     - `PROFIT_UNKNOWN` (fail-safe, same treatment as `STRIKE_UNKNOWN`): `pct_max_profit_captured` is `unknown` per step 3 (entry-credit field was ambiguous). Reason format: `PROFIT_UNKNOWN: entry credit could not be reliably read from get_account_positions ([which field(s) and why ambiguous]) — profit/underwater state is unmeasured. Verify manually.` Overrides WATCH/HOLD; does NOT override the `thesis_invalidated`/`DTE < 0` CLOSE triggers above (neither depends on `pct_max_profit_captured`), but DOES suppress the two profit-dependent CLOSE triggers (80%-target, not-underwater time-stop) and the `TIME_RISK` tier below — none of those can be evaluated without a reliable entry credit, so none fire; if `STRIKE_UNKNOWN` also applies to the same position, both reason codes appear (position is doubly unmeasured).
+     - `PROFIT_UNKNOWN` (fail-safe, same treatment as `STRIKE_UNKNOWN`): `pct_max_profit_captured` is `unknown` per step 3 — either the entry-credit field was ambiguous, or either leg's current close-price lacked usable (non-stale) bid/ask. Reason format: `PROFIT_UNKNOWN: entry credit or current close pricing could not be read reliably ([which field(s)/leg(s) and why — ambiguous entry-credit field, or missing/stale bid-ask on a leg]) — profit/underwater state is unmeasured. Verify manually.` Overrides WATCH/HOLD; does NOT override the `thesis_invalidated`/`DTE < 0` CLOSE triggers above (neither depends on `pct_max_profit_captured`), but DOES suppress the two profit-dependent CLOSE triggers (80%-target, not-underwater time-stop) and the `TIME_RISK` tier below — none of those can be evaluated without a reliable entry credit, so none fire; if `STRIKE_UNKNOWN` also applies to the same position, both reason codes appear (position is doubly unmeasured).
      - `MA150_BREACH` (locked advisory-only 2026-09-05, final config): `checks.broke_ma150_support` is true AND `thesis_invalidated` is false (short strike not yet breached — if it also breached, that's already the hard CLOSE above, this tier doesn't double-fire). Reason format: `MA150_BREACH: settled close ($<close>) below 150-day MA ($<ma150>), short strike ($<short_strike>) not yet breached. Advisory, not a hard stop — a $3k Global-Heap-Allocator backtest paired MA150-as-a-hard-stop against the final loosened-candle entry rule (any green close, not strict hammer/engulfing) and found it catastrophic ($116.21/mo strike-only vs -$19.57/mo with MA150 hard stop): looser entries land closer to MA150 at signal time, so a hard MA150 stop whipsaws out of positions that still have room to work. Human judgment call.`
      - `EARNINGS_RISK`: The position's next confirmed earnings date falls before its expiration date AND the underlying's close is within 5% of the short strike (`close <= short_strike * 1.05`). Reason format: `EARNINGS_RISK: earnings on <date> before expiry <exp_date> with close ($<close>) within 5% of short strike ($<short_strike>)`. If earnings date is unknown, do not trigger `EARNINGS_RISK`; note "earnings: unknown — verify manually".
      - `TIME_RISK`: `pct_max_profit_captured` is KNOWN AND `0 <= DTE <= 7` (not negative — an expired position is already a hard CLOSE above, this tier never applies to it) AND the position IS underwater (`pct_max_profit_captured < 0`) AND `thesis_invalidated` is false (thesis still intact). Reason format: `TIME_RISK: DTE=<n> <= 7 and underwater (captured=<pct>%), but thesis intact. Defined max loss is $<max_loss_per_share> ($<total_max_loss> total, capped). Holding into final week is a deliberate bet on reversal, not blind hope.`
