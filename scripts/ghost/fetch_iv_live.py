@@ -145,6 +145,8 @@ def main() -> None:
         help="Run verification that BullPutSpreadSignalEngine constructs without error",
     )
     args = parser.parse_args()
+    if args.days_back < 1:
+        parser.error("--days-back must be >= 1")
 
     out_path = Path(args.out).resolve()
     meta_path = out_path.parent / (out_path.stem + "_meta.json")
