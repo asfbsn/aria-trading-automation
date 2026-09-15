@@ -16,7 +16,8 @@
 # workspace-write), not the full-bypass posture opencode/agy use -- confined
 # to this repo, no network egress. That last part matters here specifically:
 # a delegated task that needs to fetch fresh yfinance/IBKR data (most
-# research/backtest work) CANNOT use codex -- route those to opencode/agy.
+# research/backtest work) CANNOT use codex by default -- route those to agy,
+# or opt in per call with CODEX_NETWORK_ACCESS=true (see below).
 # codex is the right lane for pure code edits/refactors on already-present
 # data or files (e.g. tonight's CodeRabbit-fix pattern), and it draws on an
 # independent ChatGPT Plus quota, not Google's (agy) or Sonnet's (this
