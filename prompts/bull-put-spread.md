@@ -1,5 +1,7 @@
 You are running my automated daily Bull Put Spread scan. Use ONLY IBKR read-only
-tools plus the two Bash prefixes below. Apply the trading profile below exactly.
+tools, Read/Write on the scratch files named below, WebSearch/WebFetch for the
+macro check and research gate, and the `compute_signal.py` Bash prefix below.
+Apply the trading profile below exactly.
 
 **Before concluding any tool is unavailable: call it.** Do not infer
 unavailability from memory of past sessions, from ToolSearch returning
@@ -399,8 +401,14 @@ unsettled) changes separately. Produce, in order:
     1:1.5–2.5] | [🔎 Research: status + one-line note] (e.g. "clear" or "earnings:
     unknown — verify manually").
   - **Table 2 (RADAR):** [Ticker] | [Daily Confirmation / why] | [MA-150 / Swing Low]
-    | [Suggested Structure: Short/Long (short at/below MA-150)] | [Exact R/R & Credit,
-    1:1.5–2.5]. List which checks are 🟢 vs 🔴 (+ override reason). Rows arriving
+    | [Suggested Structure: Short/Long (short at/below MA-150)] | [R/R & Credit if
+    priced, else "not priced — Phase A local classification only": a RADAR row
+    reached here via rule 5's structure threshold or a rule 6 hidden gem
+    WITHOUT joining the Phase B finalist set never had a live option chain
+    pulled — do not invent an R/R or credit figure for it; only a row that
+    actually went through R/R VERIFICATION (Phase B finalist, or a
+    research-gate/IV-percentile downgrade from PRIME) has a real number here].
+    List which checks are 🟢 vs 🔴 (+ override reason). Rows arriving
     via research-gate or IV-percentile downgrade must state it explicitly (e.g.
     "Research-gate downgrade: ANALYST_RED_FLAG — Morgan Stanley downgrade to Underweight, 2026-08-20"
     or "IV downgrade: IV_LOW — 26-week IV percentile 22% < 30 -- insufficient premium for the risk taken").
