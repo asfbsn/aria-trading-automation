@@ -108,7 +108,7 @@ def run_tier(tier_name: str, engine: BullPutSpreadSignalEngine, loader: YFLoader
         "max_drawdown": metrics.get("max_drawdown"),
         "sharpe": metrics.get("sharpe"),
     }
-    if trades_path.exists():
+    if trades_path.exists() and trades_path.stat().st_size > 0:
         trades = pd.read_csv(trades_path)
         print("\n=== TRADES (raw legs) ===")
         print(trades.to_string())

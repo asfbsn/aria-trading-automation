@@ -136,7 +136,17 @@ def main():
 
     tier_df = extract_tier_spreads(run_dir / "artifacts" / "trades.csv")
     n_total = len(tier_df)
-    tier_df["rr_ok"] = tier_df.apply(lambda r: test_rr_band(r["max_loss_per_contract"], r["credit"]), axis=1)
+    if n_total:
+        tier_df["rr_ok"] = tier_df.apply(
+            lambda r: test_rr_band(r["max_loss_per_contract"], r["credit"]), axis=1
+        )
+    else:
+        # .apply(..., axis=1) on an EMPTY DataFrame returns an empty
+        # DataFrame, not a Series -- assigning that to tier_df["rr_ok"]
+        # raises "ValueError: Cannot set a DataFrame with multiple columns
+        # to the single column rr_ok", crashing after the full backtest
+        # already ran (CodeRabbit finding, 2026-09-15).
+        tier_df["rr_ok"] = pd.Series(dtype=bool)
     n_rr = int(tier_df["rr_ok"].sum())
     wins = int((tier_df["spread_pnl"] > 0).sum())
     total_pnl = float(tier_df["spread_pnl"].sum())
