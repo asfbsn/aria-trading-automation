@@ -355,8 +355,14 @@ def evaluate_profit_target_and_time_stop(
             dte = int(raw_dte)
             is_expired = dte < 0
             is_underwater = pct_captured is not None and pct_captured < 0.0
-            # Time stop trigger: DTE < 0 (always), OR (0 <= DTE <= 7 AND not underwater)
-            ts_triggered = is_expired or (0 <= dte <= TIME_STOP_MAX_DTE and not is_underwater)
+            # not_underwater requires a KNOWN pct_captured >= 0, not merely
+            # "not known to be underwater" -- `not is_underwater` is True
+            # whenever pct_captured is None (missing pricing data), which
+            # would time-stop-close a position we have no evidence is safe
+            # to close, possibly one that's actually deeply underwater.
+            not_underwater = pct_captured is not None and pct_captured >= 0.0
+            # Time stop trigger: DTE < 0 (always), OR (0 <= DTE <= 7 AND confirmed not underwater)
+            ts_triggered = is_expired or (0 <= dte <= TIME_STOP_MAX_DTE and not_underwater)
             time_stop = {
                 "evaluated": True,
                 "dte": dte,

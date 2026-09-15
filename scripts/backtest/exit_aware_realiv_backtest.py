@@ -278,6 +278,24 @@ def run_one(run: str) -> None:
 
 def paired(h: pd.DataFrame, e: pd.DataFrame) -> pd.DataFrame:
     p = h.merge(e, on=["code", "entry_date"], suffixes=("_hold", "_exit"), how="inner")
+    # An inner join silently drops any (code, entry_date) present in only one
+    # run -- currently a no-op check, not dead code: every RUN_CONFIGS entry
+    # in this file has reentry=False (verified, 2026-09-15), which means
+    # exit timing can never feed back into which future entries get taken,
+    # so the hold/exit entry sets are guaranteed identical here and this
+    # should never fire. It exists so a future reentry=True comparison (where
+    # that guarantee no longer holds) fails loudly with an exact count
+    # instead of silently comparing a shrunken, non-obviously-biased subset
+    # (CodeRabbit finding, 2026-09-15).
+    if len(p) != len(h) or len(p) != len(e):
+        raise RuntimeError(
+            f"paired(): entry sets don't match ({len(h)} hold vs {len(e)} exit vs "
+            f"{len(p)} paired) -- inner join silently dropped "
+            f"{len(h) - len(p)} hold-only and {len(e) - len(p)} exit-only rows. "
+            f"Expected under reentry=False; if a run now uses reentry=True, this "
+            f"function needs an explicit outer-join/shared-entry-only design, not "
+            f"a silent inner join."
+        )
     p["d"] = p["spread_pnl_exit"] - p["spread_pnl_hold"]
     p["entry_date"] = pd.to_datetime(p["entry_date"])
     return p

@@ -152,8 +152,17 @@ def pull(codes: List[str]) -> None:
                 failed += 1
                 print(f"FAIL {r['date']} after {r['attempts']} attempts: {r['error']}", flush=True)
                 continue
-            with open(RAW_DATE_DIR / f"{r['date']}.json", "w") as f:
+            # Atomic replace: `todo` above skips any date whose .json file
+            # already exists (a resume mechanism for interrupted pulls) --
+            # a crash mid-write here would otherwise leave a truncated file
+            # that looks "already cached" forever, silently corrupting or
+            # blocking that date instead of getting re-fetched on the next
+            # resume run (CodeRabbit finding, 2026-09-15).
+            dest = RAW_DATE_DIR / f"{r['date']}.json"
+            tmp = dest.with_suffix(".json.tmp")
+            with open(tmp, "w") as f:
                 json.dump(r, f)
+            tmp.replace(dest)
             done += 1
             nonempty += bool(r["rows"])
             if done % 25 == 0 or r["attempts"] > 1:
@@ -186,6 +195,22 @@ def load_by_date() -> pd.DataFrame:
 
 
 def build(codes: List[str]) -> Dict[str, pd.DataFrame]:
+    # Hard-fail on a missing date FILE, unconditionally (not gated by
+    # --no-validate -- validate() only cross-checks row VALUES between two
+    # independent pulls, it never checks date-file completeness). --build
+    # rebuilds straight from whatever raw_by_date/*.json already exists on
+    # disk, so a partial/interrupted earlier pull (or a stale directory from
+    # before DATE_TO was extended) would otherwise bake silent date gaps
+    # into volatility_history.pkl with no warning (CodeRabbit finding).
+    expected = set(weekdays(DATE_FROM, DATE_TO))
+    present = {p.stem for p in RAW_DATE_DIR.glob("*.json")}
+    missing = sorted(expected - present)
+    if missing:
+        sys.exit(
+            f"cannot build: {len(missing)}/{len(expected)} expected dates missing from "
+            f"{RAW_DATE_DIR} (first: {missing[0]}, last: {missing[-1]}) -- run pull() to "
+            f"resume them first, or narrow DATE_FROM/DATE_TO to match what's actually cached."
+        )
     df = load_by_date()
     rev = {DOLT_ALIASES.get(c, c): c for c in codes}
     df["code"] = df["act_symbol"].map(rev)

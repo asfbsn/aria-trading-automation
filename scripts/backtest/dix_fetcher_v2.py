@@ -300,29 +300,38 @@ def gex_regime(
 
     # Trailing lookback window strictly before the evaluated row
     prior_sessions = history.iloc[:-1]
-    total_prior = len(prior_sessions)
 
-    # Minimum 20 sessions required for valid percentile calculation
-    if total_prior < 20:
+    # Select trailing window (up to lookback sessions), THEN drop NaN rows
+    # before counting/computing. A NaN-contaminated row previously still
+    # counted toward the "20 sessions required" minimum (checked on the raw,
+    # pre-dropna row count) while never being able to count as "strictly
+    # lower" in the percentile comparison below -- it silently diluted the
+    # comparison's effective sample size below 20 real observations without
+    # ever failing the minimum-sessions gate meant to guarantee that
+    # (CodeRabbit finding, 2026-09-15; the file's own self-test at line ~408
+    # already asserts lookback_used >= 20 whenever data_available is True --
+    # this fix makes that assertion mean what it says).
+    trailing_window = prior_sessions.iloc[-lookback:]
+    window_gex = trailing_window["gex"].dropna()
+    lookback_used = len(window_gex)
+
+    # Minimum 20 VALID sessions required for valid percentile calculation
+    if lookback_used < 20:
         return {
             "as_of_date": as_of_str,
             "gex_date": gex_date_str,
             "gex": gex_val,
             "percentile_rank": None,
             "regime": "NEGATIVE",
-            "lookback_used": total_prior,
+            "lookback_used": lookback_used,
             "data_available": False,
             "staleness_days": staleness_days,
             "reason": "stale_or_missing",
         }
 
-    # Select trailing window (up to lookback sessions)
-    trailing_window = prior_sessions.iloc[-lookback:]
-    lookback_used = len(trailing_window)
-
     # Compute percentile rank: fraction of trailing sessions with a strictly lower GEX
     # 0.0 = lowest in window, 1.0 = highest
-    percentile_rank = float((trailing_window["gex"] < gex_val).mean())
+    percentile_rank = float((window_gex < gex_val).mean())
 
     # Regime assignment: NEGATIVE (strict crash insurance) if percentile < threshold
     regime = "NEGATIVE" if percentile_rank < percentile_threshold else "POSITIVE"
@@ -343,12 +352,13 @@ def latest(
     percentile_threshold: float = 0.10,
     lookback: int = 252,
     max_staleness_days: int = 3,
+    force_refresh: bool = False,
 ) -> dict[str, Any]:
     """
     Convenience: gex_regime() as of today (real wall-clock date), using
     load_series() to get fresh data. This is what the live exit-guard calls.
     """
-    series = load_series()
+    series = load_series(force_refresh=force_refresh)
     today = datetime.date.today()
     return gex_regime(
         series=series,
@@ -446,8 +456,11 @@ def main() -> None:
     """
     CLI Entrypoint.
     Supports:
-        python3 dix_fetcher_v2.py --json [--as-of YYYY-MM-DD] [--percentile-threshold 0.10] [--lookback 252]
-    If --json is omitted, runs self-tests.
+        python3 dix_fetcher_v2.py --json [--as-of YYYY-MM-DD] [--percentile-threshold 0.10] [--lookback 252] [--force-refresh]
+        python3 dix_fetcher_v2.py --test
+    Neither flag: prints usage (2026-09-15 -- previously silently ran
+    self-tests even without --test, making that flag decorative; CodeRabbit
+    finding).
     """
     parser = argparse.ArgumentParser(
         description="SqueezeMetrics DIX/GEX fetcher and regime signal calculator."
@@ -517,15 +530,17 @@ def main() -> None:
                     percentile_threshold=args.percentile_threshold,
                     lookback=args.lookback,
                     max_staleness_days=staleness,
+                    force_refresh=args.force_refresh,
                 )
             # Output pure JSON to stdout
             print(json.dumps(output, indent=2))
         except Exception as cli_err:
             print(f"[dix_fetcher_v2] Error: {cli_err}", file=sys.stderr)
             sys.exit(1)
-    else:
-        # Run self-tests when invoked without --json
+    elif args.test:
         run_self_test()
+    else:
+        parser.print_help()
 
 
 if __name__ == "__main__":

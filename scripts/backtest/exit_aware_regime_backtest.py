@@ -528,10 +528,20 @@ def run_sanity_assertions(
     n_vrp_entries = len(runs["vrp_hold"]["entries"])
     n_iv_entries = len(runs["iv_hold"]["entries"])
     print(f"Sanity Check 1: vrp_hold entries ({n_vrp_entries}) vs iv_hold entries ({n_iv_entries})")
-    if n_vrp_entries == n_iv_entries:
+    # vrp_hold's default entry_mode is "vrp_plus_baseline" -- the VRP
+    # threshold is an ADDITIONAL requirement on top of the baseline gate, so
+    # vrp_hold's entries must be a subset (strictly fewer, since VRP_THRESHOLD
+    # excludes at least some baseline-qualifying bars in a real 563-ticker
+    # run). A bare `==` check only catches the exact-equality case and would
+    # silently pass a worse bug where vrp_hold somehow has MORE entries than
+    # the baseline -- proof the gate is misconfigured (e.g. running as
+    # vrp_only) or leaking entries the baseline gate itself rejects
+    # (CodeRabbit finding, 2026-09-15).
+    if n_vrp_entries >= n_iv_entries:
         raise RuntimeError(
-            f"FATAL: vrp_hold entry count ({n_vrp_entries}) equals iv_hold entry count ({n_iv_entries})! "
-            f"The VRP entry gate did not change entry selection."
+            f"FATAL: vrp_hold entry count ({n_vrp_entries}) is not strictly fewer than "
+            f"iv_hold entry count ({n_iv_entries})! The VRP entry gate did not filter "
+            f"(or, worse, added entries the baseline gate itself doesn't have)."
         )
     print(f"  Passed: VRP gate reduced entries from {n_iv_entries} to {n_vrp_entries} (-{n_iv_entries - n_vrp_entries} trades).")
 
