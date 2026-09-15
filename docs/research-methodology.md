@@ -157,13 +157,23 @@ Two separate tests, same day, both pointing the same direction:
    -0.083. Both looser tiers flip net-negative despite a win rate barely 7-8
    points lower than the strict gate.
 2. **This IAF bridge script** (744-ticker universe, 10 walk-forward windows,
-   2023–2026): structural MA150 survival rate is statistically identical
-   between tiers — 43.58% (current, 319/732) vs 43.22% (structural+2-of-3
-   incremental signals only, 2999/6939), diff +0.36pp, p=0.87 two-sided,
-   not significant. (First-run numbers, before the double-count fix
+   2023–2026): no statistically significant difference observed in structural
+   MA150 survival rate between tiers — 43.58% (current, 319/732) vs 43.22%
+   (structural+2-of-3 incremental signals only, 2999/6939), diff +0.36pp,
+   p=0.87 two-sided, not significant. A non-significant test at this sample
+   size supports "no difference detected," not "the rates are equivalent" --
+   no margin of practical equivalence was defined or tested. (First-run
+   numbers, before the double-count fix
    described in section 3 above, were 43.58% vs 43.25% on an overlapping —
    not incremental — s23 pool; direction and conclusion unchanged by the
-   fix.)
+   fix.) Caveat on the p-value itself (2026-09-15, not yet fixed): the
+   permutation test treats every signal as an independent trial, but
+   multiple signals from the same ticker with overlapping forward windows
+   are correlated -- p=0.87 likely understates the true uncertainty. See
+   `run_permutation_test()`'s docstring in
+   `scripts/research/iaf_ma150_survival_bridge.py` for why this is deferred
+   rather than guessed at, and the reasoning for why it's more likely to
+   reinforce than overturn "not significant."
 
 **The combined read:** loosening the confirmation checks (volume, candle
 pattern, RSI-rising) does *not* make the underlying more likely to drift

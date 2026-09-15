@@ -41,7 +41,7 @@ from signal_core import (  # noqa: E402
     RSI_LENGTH,
     bear_entry_checks,
     rsi_series,
-    sma,
+    ema,
 )
 
 
@@ -260,7 +260,7 @@ def main():
     fetch_time = time.time() - fetch_t0
 
     # 2. Extract & Precompute Indicators per Ticker
-    print("Precomputing indicators (MA50, MA150, Wilder RSI, candle patterns)...")
+    print("Precomputing indicators (MA50/SMA, MA150/EMA, Wilder RSI, candle patterns)...")
     prep_t0 = time.time()
     ticker_data_map: Dict[str, Tuple[List[Dict[str, Any]], List[float], List[float], List[float]]] = {}
     failed_tickers: List[str] = []
@@ -358,15 +358,15 @@ def main():
                     continue
 
                 # Signal day MA150 (held fixed over the forward 30-day window)
-                signal_ma150 = sma(closes[: i + 1], 150)
-                if signal_ma150 is None:
+                signal_ema150 = ema(closes[: i + 1], 150)
+                if signal_ema150 is None:
                     continue
 
                 # 30 trading days forward closes
                 forward_closes = closes[i + 1 : i + 1 + forward_days]
-                # Held resistance if close NEVER rose above signal_ma150
+                # Held resistance if close NEVER rose above signal_ema150
                 max_fwd_close = max(forward_closes)
-                held = int(max_fwd_close <= signal_ma150)
+                held = int(max_fwd_close <= signal_ema150)
 
                 if conf_curr:
                     w_current_signals += 1
@@ -422,7 +422,7 @@ def main():
     print("BEAR IAF MA150 FORWARD RESISTANCE-HOLD WALK-FORWARD EVALUATION REPORT")
     print("=" * 90)
     print(f"Dataset: {len(ticker_data_map)} tickers | Date range: {args.start_date} to {today_str}")
-    print(f"Forward Horizon: {forward_days} trading days | MA150 Resistance-Hold: close <= signal_ma150 for all {forward_days} days")
+    print(f"Forward Horizon: {forward_days} trading days | MA150 Resistance-Hold: close <= signal_ema150 for all {forward_days} days")
     print("-" * 90)
     print(
         f"{'Window':<8} {'Test Period':<24} | "

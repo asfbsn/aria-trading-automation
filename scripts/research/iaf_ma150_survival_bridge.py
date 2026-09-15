@@ -41,7 +41,7 @@ from signal_core import (  # noqa: E402
     RSI_LENGTH,
     entry_checks,
     rsi_series,
-    sma,
+    ema,
 )
 
 
@@ -142,6 +142,23 @@ def run_permutation_test(
     Returns (p_value_two_sided, p_value_one_sided, diff_obs, rate_a, rate_b).
     p_value_two_sided/p_value_one_sided are None if either arm has zero
     signals -- the comparison is undefined, not "no difference found".
+
+    KNOWN LIMITATION (CodeRabbit finding, 2026-09-15, not yet fixed):
+    treats every (ticker, window) signal as an independent Bernoulli trial.
+    Multiple signals from the SAME ticker with overlapping 30-day forward
+    windows are correlated (they can share forward-window trading days and
+    the same underlying trend), violating i.i.d. -- the reported p=0.87 (see
+    docs/research-methodology.md) likely understates the true uncertainty.
+    Deferred rather than guessed at: a correct fix needs a real design
+    decision on cluster granularity (per-ticker? per-ticker-per-overlapping-
+    window-group, given windows can overlap in complex ways within one
+    ticker?) before rewriting this as a block/cluster permutation instead of
+    a flat hypergeometric shuffle -- not something to redesign blind.
+    Directionally, clustering corrections generally make significance tests
+    MORE conservative (wider effective uncertainty from fewer truly-
+    independent observations), so this is far more likely to reinforce the
+    current "no significant difference" conclusion than overturn it -- but
+    that is a plausibility argument, not a substitute for the actual fix.
     """
     n_a = len(outcomes_a)
     n_b = len(outcomes_b)
@@ -260,7 +277,7 @@ def main():
     fetch_time = time.time() - fetch_t0
 
     # 2. Extract & Precompute Indicators per Ticker
-    print("Precomputing indicators (MA50, MA150, Wilder RSI, candle patterns)...")
+    print("Precomputing indicators (MA50/SMA, MA150/EMA, Wilder RSI, candle patterns)...")
     prep_t0 = time.time()
     ticker_data_map: Dict[str, Tuple[List[Dict[str, Any]], List[float], List[float], List[float]]] = {}
     failed_tickers: List[str] = []
@@ -358,15 +375,15 @@ def main():
                     continue
 
                 # Signal day MA150 (held fixed over the forward 30-day window)
-                signal_ma150 = sma(closes[: i + 1], 150)
-                if signal_ma150 is None:
+                signal_ema150 = ema(closes[: i + 1], 150)
+                if signal_ema150 is None:
                     continue
 
                 # 30 trading days forward closes
                 forward_closes = closes[i + 1 : i + 1 + forward_days]
-                # Survived if close NEVER fell below signal_ma150
+                # Survived if close NEVER fell below signal_ema150
                 min_fwd_close = min(forward_closes)
-                survived = int(min_fwd_close >= signal_ma150)
+                survived = int(min_fwd_close >= signal_ema150)
 
                 if conf_curr:
                     w_current_signals += 1
@@ -374,15 +391,23 @@ def main():
                     w_current_outcomes.append(survived)
                     pooled_current_outcomes.append(survived)
 
-                # conf_curr (7-of-7) implies conf_s23 (structural + >=2-of-3
-                # confirm) -- current is a strict subset of s23. Counting a
-                # signal in BOTH pools would make the two-proportion test
-                # compare a group against itself-plus-extra, violating the
-                # test's independence assumption (CodeRabbit finding,
-                # 2026-08-31). Only count the INCREMENTAL signals s23 adds
-                # beyond current -- this is also the more decision-relevant
-                # comparison: does loosening the gate's own new signals hold
-                # up, not a self-referential one.
+                # current and s23 are NOT nested (CodeRabbit finding,
+                # 2026-09-15): current's DEFAULT_GATE_KEYS never requires
+                # near_ma50_pullback, but s23's min_structural=4 requires ALL
+                # four STRUCTURAL_KEYS including it -- so current=True does
+                # NOT imply s23=True. They're two independent, overlapping
+                # tiers, not one a strict superset of the other. The sets DO
+                # still intersect (whenever near_ma50_pullback also holds on
+                # a bar that already passes current, since current's
+                # rsi_rising+bullish_candle alone already clear s23's
+                # min_confirm=2). Counting an overlap signal into BOTH pools
+                # would violate the two-proportion test's independence
+                # assumption, so it's counted only once, in the `conf_curr`
+                # pool above -- this block only takes s23-only signals,
+                # keeping the two pools disjoint. This is a "signals the
+                # loosened s23 tier accepts that the current gate doesn't"
+                # comparison, not an "incremental signals added on top of
+                # current" one.
                 if conf_s23 and not conf_curr:
                     w_s23_signals += 1
                     w_s23_survived += survived
@@ -422,7 +447,7 @@ def main():
     print("IAF MA150 FORWARD-SURVIVAL WALK-FORWARD EVALUATION REPORT")
     print("=" * 90)
     print(f"Dataset: {len(ticker_data_map)} tickers | Date range: {args.start_date} to {today_str}")
-    print(f"Forward Horizon: {forward_days} trading days | MA150 Survival: close >= signal_ma150 for all {forward_days} days")
+    print(f"Forward Horizon: {forward_days} trading days | MA150 Survival: close >= signal_ema150 for all {forward_days} days")
     print("-" * 90)
     print(
         f"{'Window':<8} {'Test Period':<24} | "
