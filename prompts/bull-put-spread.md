@@ -284,44 +284,51 @@ tools:
 ## 🔎 QUALITATIVE RESEARCH GATE — PRIME-eligible only
 Runs ONLY on names that survive R/R VERIFICATION (passed technical rules 1,3,5 AND
 verified a compliant 1:1.5–2.5 spread via tiered strike search at/below MA-150 — typically 0–3
-names; token economy: do NOT search rejects/RADAR). For each such candidate, use
-`WebSearch` (and `WebFetch` for specific URLs worth opening, e.g. SEC filing index
-pages) to perform four checks:
+names; token economy: do NOT search rejects/RADAR).
 
-1. **Earnings timing** — search next confirmed earnings date. If it falls BEFORE
-   the option expiration chosen in R/R VERIFICATION (~30 DTE expiry) → 🔴 flag
-   `EARNINGS_BEFORE_EXPIRY: <date>` (gap risk inside short premium). If no date
-   is confirmable, flag `earnings: unknown — verify manually` (do not treat
-   unknown as clear, but do not block/red-flag on unknown).
-2. **Analyst sentiment** — search recent (~30 days) rating changes and consensus
-   price target. 🔴 flag `ANALYST_RED_FLAG: <what was found>` if there was a
-   recent downgrade OR consensus price target sits meaningfully (>10%) below
-   current price. Cite specifics (firm name, rating change, target number) — not
-   vague "sentiment negative."
-3. **News / sector catalysts** — search recent headlines (last 1–2 weeks) for
-   material negative catalysts: guidance cuts, regulatory action, product recalls,
-   litigation, or sector-wide selloff specific to this name. 🔴 flag
-   `NEWS_RED_FLAG: <one-line summary + finding>` if material. Routine market
-   noise/commentary is not a flag.
-4. **SEC filings** — search most recent 8-K/10-Q filings plus recent Form 4s (e.g.
-   `site:sec.gov <ticker> 8-K` or EDGAR search via WebFetch). 🔴 flag
-   `SEC_RED_FLAG: <what was found>` ONLY for material adverse disclosures:
-   restatements, guidance withdrawal, going-concern warnings, or an
-   insider-selling cluster — defined as **3+ distinct insiders filing Form 4
-   open-market sales within any 30-day window over the last 90 days** (a single
-   seller, or scheduled 10b5-1 plan sales, is NOT a cluster). Routine periodic
-   filings are not flags.
+**Hard cap: at most the top 3 PRIME-eligible names get the research gate below,
+ranked by R/R (max loss ÷ credit) ascending — lowest R/R first, same ordering
+rule and rationale as the PRIME-survivor ranking below (lower R/R = more
+credit collected per dollar of risk).** If more than 3 survive R/R VERIFICATION, the rest skip straight
+to RADAR with `research: skipped — beyond top-3 research cap` (not REJECT — the
+technical signal is real, just unresearched this run). This bounds worst-case tool
+calls to 3 names × 2 calls regardless of how many names pass R/R.
+
+For each of the (at most 3) candidates, use **exactly two** `WebSearch` calls — do not
+issue more than two per ticker, this is a hard budget, not a suggestion:
+
+**Call 1 — combined earnings/analyst/news query** — one search covering next
+earnings date, recent (~30 day) analyst rating changes/price target, and recent
+(1–2 week) headlines for material negative catalysts (guidance cuts, regulatory
+action, recalls, litigation, sector-specific selloff). From the results, apply:
+- **Earnings**: if the confirmed date falls BEFORE the option expiration chosen in
+  R/R VERIFICATION (~30 DTE) → 🔴 flag `EARNINGS_BEFORE_EXPIRY: <date>`. If no date
+  is confirmable, flag `earnings: unknown — verify manually` (not treated as clear).
+- **Analyst sentiment**: 🔴 flag `ANALYST_RED_FLAG: <what was found>` for a recent
+  downgrade OR consensus price target meaningfully (>10%) below current price. Cite
+  specifics (firm, rating change, target number) — not vague "sentiment negative."
+- **News/catalysts**: 🔴 flag `NEWS_RED_FLAG: <one-line summary>` for material
+  negative catalysts found. Routine market noise/commentary is not a flag.
+
+**Call 2 — SEC filings query** (`site:sec.gov <ticker> 8-K` or equivalent) — search
+recent 8-K/10-Q filings plus recent Form 4s. 🔴 flag `SEC_RED_FLAG: <what was
+found>` ONLY for material adverse disclosures: restatements, guidance withdrawal,
+going-concern warnings, or an insider-selling cluster — defined as **3+ distinct
+insiders filing Form 4 open-market sales within any 30-day window over the last 90
+days** (a single seller, or scheduled 10b5-1 plan sales, is NOT a cluster). Routine
+periodic filings are not flags. Use `WebFetch` instead of a second `WebSearch` only
+if a specific filing-index URL is already known from Call 1's results.
 
 **Verdict rules (hard gate):**
-- **Checks 1–3 🔴 flag (earnings / analyst / news)** → **Downgrade to RADAR**
+- **Call 1 🔴 flag (earnings / analyst / news)** → **Downgrade to RADAR**
   (Table 2). Retain full technical details; state the research flag(s) as the
   justification.
-- **Check 4 🔴 flag (SEC filings)** → **Downgrade to REJECT** (hard stop, no
+- **Call 2 🔴 flag (SEC filings)** → **Downgrade to REJECT** (hard stop, no
   discretionary override). Group in Rejects with specific finding named.
-- **Tool error / empty results on any check** → Do NOT treat as clear and do NOT
+- **Tool error / empty results on either call** → Do NOT treat as clear and do NOT
   fail the scan. Mark `<category>: unavailable — verify manually` and continue.
   This does NOT increment `SIGNALS_FAILED` (technical pipeline counter only).
-- **All four checks clear (or unknown/unavailable without red flag)** → **PRIME**
+- **Both calls clear (or unknown/unavailable without red flag)** → **PRIME**
   (Table 1). Every Table 1 row must display its research status inline.
 
 ## 📋 TRADE DIRECTIVE — final PRIME names only

@@ -142,5 +142,11 @@ If a premarket note applies (meaningful move vs strike/MA150 or data unavailable
 Then, on its own final line, emit exactly:
 POSITIONS_CHECKED: <N>
 
+**This must be the literal last line of the entire response — nothing may follow it,
+not even a trailing blank line with content after, a "trade math for reference" recap,
+or any other addendum.** The wrapper script parses the last non-empty line and hard-fails
+the run (no alert delivered) if it doesn't match `^POSITIONS_CHECKED: [0-9]+$` exactly —
+any text after this line, however small, breaks delivery of the whole report.
+
 Do not add commentary, recommendations, or risk assessment beyond the verdict, one-line reason, and factual premarket note — this is a factual listing only. The human decides what action to take.
 
