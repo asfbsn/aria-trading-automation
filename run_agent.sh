@@ -2,11 +2,12 @@
 # Lets Claude Code (the Orchestrator) delegate a task to a coding agent backend.
 #
 # Usage:
-#   ./run_agent.sh [--backend opencode|agy|codex] [--model <id>] "<prompt>"
+#   ./run_agent.sh [--backend agy|codex] [--model <id>] "<prompt>"
 #
-# Defaults to the free OpenCode model, so the legacy form
+# Defaults to agy (gemini). opencode is disabled (2026-09-15, explicit
+# instruction) -- gemini and codex only. The legacy no-flag form
 #   ./run_agent.sh "<prompt>"
-# keeps working unchanged.
+# still works, now against agy instead of opencode.
 #
 # codex runs via the `codex` CLI, authenticated against a ChatGPT Plus login
 # (not an API key). Model is fixed to whatever ~/.codex/config.toml sets
@@ -33,19 +34,16 @@ if [ -n "${ORCHESTRATOR_AGENT_RUNNING:-}" ]; then
   exit 1
 fi
 
-OPENCODE_MODELS=(
-  "opencode/deepseek-v4-flash-free"
-  "opencode/deepseek-v4-flash"
-  "opencode/gemini-3.6-flash"
-  "opencode/claude-sonnet-4-6"
-)
 AGY_MODELS=(
+  "gemini-3.8-flash-low"
+  "gemini-3.8-flash-medium"
+  "gemini-3.8-flash-high"
+  "gemini-3.7-flash-low"
+  "gemini-3.7-flash-medium"
+  "gemini-3.7-flash-high"
   "gemini-3.6-flash-low"
   "gemini-3.6-flash-medium"
   "gemini-3.6-flash-high"
-  "gemini-3.5-flash-low"
-  "gemini-3.5-flash-medium"
-  "gemini-3.5-flash-high"
   "gemini-3.1-pro-low"
   "gemini-3.1-pro-high"
   "gpt-oss-120b-medium"
@@ -61,12 +59,15 @@ CODEX_MODELS=(
   "high"
 )
 
-BACKEND="opencode"
+# opencode disabled per explicit 2026-09-15 instruction: gemini (agy) and
+# codex only. agy is the default (opencode's free-tier general-purpose role
+# now falls to it); codex stays opt-in (sandboxed, no network egress).
+BACKEND="agy"
 MODEL=""
 PROMPT=""
 
 usage() {
-  echo "Usage: ./run_agent.sh [--backend opencode|agy|codex] [--model <id>] \"<prompt>\"" >&2
+  echo "Usage: ./run_agent.sh [--backend agy|codex] [--model <id>] \"<prompt>\"" >&2
 }
 
 while [ $# -gt 0 ]; do
@@ -106,11 +107,13 @@ if [ -z "$PROMPT" ]; then
 fi
 
 case "$BACKEND" in
-  opencode) ALLOWED=("${OPENCODE_MODELS[@]}"); DEFAULT_MODEL="opencode/deepseek-v4-flash-free" ;;
-  agy)      ALLOWED=("${AGY_MODELS[@]}");      DEFAULT_MODEL="gemini-3.6-flash-high" ;;
+  opencode)
+    echo "ERROR: opencode backend disabled (2026-09-15) -- use --backend agy or --backend codex." >&2
+    exit 2 ;;
+  agy)      ALLOWED=("${AGY_MODELS[@]}");      DEFAULT_MODEL="gemini-3.8-flash-high" ;;
   codex)    ALLOWED=("${CODEX_MODELS[@]}");    DEFAULT_MODEL="medium" ;;
   *)
-    echo "ERROR: unknown backend '$BACKEND' (expected: opencode, agy, codex)." >&2
+    echo "ERROR: unknown backend '$BACKEND' (expected: agy, codex)." >&2
     exit 2 ;;
 esac
 
@@ -134,9 +137,6 @@ echo "Task: $PROMPT"
 export ORCHESTRATOR_AGENT_RUNNING=1
 
 case "$BACKEND" in
-  opencode)
-    exec opencode run "$PROMPT" --model "$MODEL" --auto
-    ;;
   agy)
     # agy's `--model` flag is ignored by `agy --print` (verified: cli.log always shows
     # "Propagating selected model override to backend" using the *persisted* model,
