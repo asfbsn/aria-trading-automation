@@ -193,6 +193,7 @@ def main():
         # testing) and only ever downgrades an already-True result -- never
         # used to promote a settled-failing name. Does not touch signal_core's
         # entry_checks() gate logic; this is a Phase-A-only forwarding filter.
+        settled_confirmed = entry_confirmed
         if entry_confirmed and live_close is not None and ma150 is not None and live_close <= ma150:
             entry_confirmed = False
             checks["live_filter_failed"] = True
@@ -219,8 +220,14 @@ def main():
             # dropping an already-confirmed name here contradicts that
             # contract and would hide a real signal from Phase B entirely
             # (CodeRabbit finding, 2026-09-15). A confirmed result always
-            # bypasses the band test.
-            if (cond_a and cond_b) or entry_confirmed:
+            # bypasses the band test -- gated on settled_confirmed (captured
+            # before the live-filter block above), not the post-mutation
+            # entry_confirmed, so a settled-confirmed name that the live
+            # filter later disqualifies still reaches the shortlist/per_ticker
+            # bookkeeping instead of vanishing silently (CodeRabbit finding,
+            # 2026-09-15 round 2 -- the live filter runs before this check and
+            # can zero entry_confirmed first).
+            if (cond_a and cond_b) or settled_confirmed:
                 shortlist.append(ticker)
                 rsi_raw_by_ticker[ticker] = rsi_now
                 per_ticker[ticker] = {
