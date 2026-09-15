@@ -61,8 +61,8 @@ option-chain/pricing data is always IBKR, never yfinance.
    provisional bar (must confirm at support with volume), the allocator's sizing
    arithmetic (0 fit at every tested width ⇒ `BLOCKED — heap exhausted`), sector
    diversification guard, and mandatory exits: GTC buy-to-close at 20% of credit
-   (80% capture), stop below short strike/MA150, DTE≤7 time stop. Advisory only
-   — a human places every order.
+   (80% capture), hard stop below short strike, DTE≤7 time stop, plus an
+   advisory MA150-breach review. Advisory only — a human places every order.
 6. **Report** into two clearly separated tables:
    - 🟢 **PRIME** — `entry_confirmed: true` + strong structure + verified
      1:1.5–2.5 R/R + clean research gate (the only execution-ready names).
