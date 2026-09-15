@@ -24,7 +24,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-BASE = Path("/home/assaf/Projects/aria-trading/scripts/backtest")
+BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE.parent))
 sys.path.insert(0, str(BASE))
 
@@ -91,6 +91,9 @@ def main():
         })
 
     print(f"Matched strike-breach events: {len(breach_events)}", flush=True)
+    if not breach_events:
+        print("No breach events matched -- nothing to score.")
+        return
     n_recover_gt = sum(1 for e in breach_events if e["ground_truth_recover"])
     print(f"Ground truth: {n_recover_gt} recover, {len(breach_events) - n_recover_gt} bleed "
           f"(ratio 1:{(len(breach_events)-n_recover_gt)/max(n_recover_gt,1):.1f})", flush=True)

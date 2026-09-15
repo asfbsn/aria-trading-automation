@@ -43,7 +43,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-BASE = Path("/home/assaf/Projects/aria-trading/scripts/backtest")
+BASE = Path(__file__).resolve().parents[1] / "scripts" / "backtest"
 sys.path.insert(0, str(BASE.parent))
 sys.path.insert(0, str(BASE))
 

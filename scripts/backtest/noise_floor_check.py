@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
-BASE = Path("/home/assaf/Projects/aria-trading/scripts/backtest")
+BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE.parent))
 sys.path.insert(0, str(BASE))
 
