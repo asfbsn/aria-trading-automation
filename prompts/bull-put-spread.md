@@ -410,7 +410,15 @@ unsettled) changes separately. Produce, in order:
   plus prescreen "failures" listed with reasons. A `SEC_RED_FLAG` hard-reject
   or liquidity-gate REJECT gets its own clearly labeled one-liner naming the specific
   finding (e.g. "Liquidity gate: short put bid-ask $0.45 > $0.30" or "Liquidity gate: long put open interest 42 < 100",
-  not lumped anonymously with technical rejects).
+  not lumped anonymously with technical rejects). This section is exactly the
+  set counted in the Headline's reject count and in `reject-tickers-named`
+  below -- Phase B tool-call failures do NOT belong here (see Failures below).
+- **Failures** (only if SIGNALS_FAILED > 0): list each Phase-B ticker where a
+  tool call itself broke (exception, timeout, garbage response) with why, in
+  its own subsection separate from Rejects. Never counted in the Headline's
+  reject count or in `reject-tickers-named` -- it never got a definitive
+  answer, so it isn't a REJECT. Omit this subsection entirely when
+  SIGNALS_FAILED is 0.
 
 After the report, emit these FIVE lines, each on its own line, in this exact
 order, as the literal last thing you output:
@@ -437,8 +445,14 @@ garbage response) and you have nothing to write down at all.
 SCREENER_CONSTITUENTS = the shortlist tickers. SIGNALS_COMPLETED +
 SIGNALS_FAILED MUST equal the length of the prescreen shortlist (not the full
 universe). Prescreen failures are accounted in the wrapper, not in these
-counters. If any shortlisted ticker failed, list which ones and why in the
-Rejects section — do NOT silently drop it from the count. SIGNALS_FAILED > 0
+counters. If any shortlisted ticker failed, list which ones and why in a
+separate **Failures** subsection — NOT inside the Rejects section, and NOT
+counted in the Headline's reject count: a failed ticker never got a
+definitive answer, so it isn't a REJECT, and folding it into "reject-tickers-
+named" would make that count (which SIGNALS_COMPLETED must equal alongside
+prime-rows + radar-rows) inconsistent with SIGNALS_COMPLETED itself, which
+excludes it. Do NOT silently drop it from the report — list it in Failures,
+just never in the reject tally. SIGNALS_FAILED > 0
 means the run is treated as a failure by the wrapper script even if the report
 body looks complete — this is intentional: a genuine tool-call breakage must
 never be reported as a clean run. `insufficient_data` and "no contract found"
