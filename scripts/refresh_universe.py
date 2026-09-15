@@ -193,7 +193,7 @@ def fetch_market_caps_and_sectors(
     return market_caps, ticker_sectors, dropped_count
 
 
-def build_universe() -> tuple[list[dict], int]:
+def build_universe() -> tuple[list[dict], int, int]:
     """Fetch 4 sources, union tickers with sector priority, fetch market caps, and filter."""
     ticker_sectors: dict[str, str] = {}
 
@@ -238,7 +238,15 @@ def build_universe() -> tuple[list[dict], int]:
             })
 
     rows.sort(key=lambda r: -r["approx_mktcap_usd"])
-    return rows, dropped_count
+    # attempted = every ticker actually submitted to the market-cap lookup --
+    # NOT len(rows) + dropped_count, which would undercount: rows is filtered
+    # a second time by the $10B-$5T band above, and those legitimately
+    # out-of-band tickers are neither in rows nor in dropped_count (lookup
+    # failures only). Undercounting attempted would inflate dropped_count's
+    # share of it and false-positive-abort a normal run (CodeRabbit finding,
+    # 2026-09-15 -- caught in this same fix's own follow-up review).
+    attempted = len(updated_ticker_sectors)
+    return rows, dropped_count, attempted
 
 
 def main():
@@ -247,10 +255,23 @@ def main():
     )
     parser.parse_args()
 
-    rows, dropped_count = build_universe()
+    rows, dropped_count, attempted = build_universe()
 
     if not rows:
         print("ERROR: parsed 0 constituents -- check source URLs and market cap fetcher.", file=sys.stderr)
+        sys.exit(1)
+
+    # A rows-only check misses a partial failure: if the market-cap source
+    # rate-limits or 401s across most chunks, fetch_market_caps_and_sectors
+    # still returns a small surviving subset and this would silently
+    # overwrite data/universe.csv with a truncated universe the daily scan
+    # then runs against (CodeRabbit finding, 2026-09-15).
+    if dropped_count > 0.20 * attempted:
+        print(
+            f"ERROR: market cap lookup failed for {dropped_count}/{attempted} tickers "
+            "-- refusing to overwrite data/universe.csv.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
