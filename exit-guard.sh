@@ -207,6 +207,8 @@ if [ "${CLAUDE_EC:-1}" = "0" ] \
     notify "Exit Guard sent" "$TODAY"
   else
     notify "Exit Guard: Telegram FAILED" "report is in $LOG_FILE — review manually"
+    echo "[$RUN_TS] FAILURE: Telegram delivery failed; report remains at $LOG_FILE" >>"$ERR_FILE"
+    exit 1
   fi
   echo "[$RUN_TS] Done → $LOG_FILE" >>"$ERR_FILE"
   exit 0
