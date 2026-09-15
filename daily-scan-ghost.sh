@@ -32,10 +32,15 @@ send_telegram() {
     echo "[$RUN_TS] Telegram not configured; skipping." >>"$ERR_FILE"
     return 0
   fi
-  curl -s -m 30 "https://api.telegram.org/bot${tok}/sendMessage" \
+  # The token-bearing URL goes through -K (a curl config file, here a
+  # process substitution) instead of argv -- "bot<TOKEN>/..." as a literal
+  # curl argument is visible to any other local user via `ps`/
+  # `/proc/<pid>/cmdline` for curl's runtime (CodeRabbit finding, same
+  # pattern already fixed in research-reminder.sh 2026-08-31).
+  curl -s -m 30 -K <(printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$tok") \
     --data-urlencode "chat_id=${chat}" --data-urlencode "text=${msg}" >/dev/null 2>>"$ERR_FILE" || true
   if [ -n "$file" ] && [ -f "$file" ]; then
-    curl -s -m 60 "https://api.telegram.org/bot${tok}/sendDocument" \
+    curl -s -m 60 -K <(printf 'url = "https://api.telegram.org/bot%s/sendDocument"\n' "$tok") \
       -F "chat_id=${chat}" -F "document=@${file}" \
       -F "caption=ARIA Ghost System — ${TODAY}" >/dev/null 2>>"$ERR_FILE" || true
   fi
@@ -126,7 +131,20 @@ from scripts.ghost.ghost_fill_logger import ROOT, rows
 prescreen = json.loads(Path(sys.argv[1]).read_text())
 observations = rows(ROOT / 'state/ghost/ghost_observations_raw.csv')[int(sys.argv[3]):]
 assert all(row['run_id'] == prescreen['run_id'] for row in observations), 'Unexpected run id'
-assert Counter(row['candidate_id'] for row in observations) == Counter(c['candidate_id'] for c in prescreen['candidates']), 'Incomplete observations'
+# Reconcile by DISTINCT candidate_id, not raw row multiplicity: a retried
+# candidate (e.g. a transient quote-capture failure followed by a working
+# attempt) legitimately logs more than one raw observation row for the same
+# candidate_id -- per the design (see the plan's R5 revision), that's fine
+# as long as every candidate got at least one attempt logged and nothing
+# unexpected shows up. A raw Counter-multiset equality check would fail a
+# perfectly successful run the moment any retry occurred (CodeRabbit
+# finding, 2026-09-15).
+observed_ids = {row['candidate_id'] for row in observations}
+expected_ids = {c['candidate_id'] for c in prescreen['candidates']}
+missing = expected_ids - observed_ids
+assert not missing, f'Missing observations for candidates: {sorted(missing)}'
+unexpected = observed_ids - expected_ids
+assert not unexpected, f'Unexpected candidate_ids in observations: {sorted(unexpected)}'
 counts = Counter(row['outcome'] for row in observations)
 lines = Path(sys.argv[2]).read_text().strip().splitlines()
 summary = re.fullmatch(r'PROCESSED: (\d+) ACCEPTED: (\d+) REJECTED: (\d+)', lines[-1] if lines else '')
