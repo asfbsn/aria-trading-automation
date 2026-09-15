@@ -285,6 +285,26 @@ def gex_regime(
     # Calendar staleness: number of days between as_of_day and evaluated gex date
     staleness_days = (as_of_day - gex_date_ts).days
 
+    # An unparseable gex value comes through _parse_dix_dataframe() as NaN --
+    # treat it the same as missing data (fail-safe NEGATIVE), not as a real
+    # 0.0 percentile rank. Without this, (window_gex < NaN).mean() is 0.0 for
+    # any window (NaN never compares less-than anything), which forces
+    # regime=NEGATIVE anyway but mislabels it data_available=True with a
+    # fabricated gex/percentile_rank instead of surfacing the real problem
+    # (CodeRabbit finding, 2026-09-15).
+    if pd.isna(gex_val):
+        return {
+            "as_of_date": as_of_str,
+            "gex_date": gex_date_str,
+            "gex": None,
+            "percentile_rank": None,
+            "regime": "NEGATIVE",
+            "lookback_used": 0,
+            "data_available": False,
+            "staleness_days": staleness_days,
+            "reason": "stale_or_missing",
+        }
+
     if staleness_days > max_staleness_days:
         return {
             "as_of_date": as_of_str,
