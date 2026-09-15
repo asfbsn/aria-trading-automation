@@ -56,6 +56,7 @@ from signal_core import (
     MA_LENGTHS,
     MIN_BARS,
     bars_from_parallel_arrays,
+    ema,
     entry_checks,
     rsi_series,
     sma,
@@ -96,10 +97,14 @@ def main():
 
     rsis = rsi_series(closes, RSI_LENGTH)
     rsi_now = rsis[-1]
-    rsi_prev2 = rsis[-3] if len(rsis) >= 3 else None
+    # Matches entry_checks()'s 1-bar lookback (2026-09-14 dashboard-fidelity
+    # policy) -- this was a separate, stale, display-only copy of the old
+    # 2-bar comparison; kept in sync here so the printed JSON never
+    # contradicts the checks dict it sits next to.
+    rsi_prev = rsis[-2] if len(rsis) >= 2 else None
 
     ma50 = sma(closes, 50)
-    ma150 = sma(closes, 150)
+    ma150 = ema(closes, 150)  # matches entry_checks()'s ma150 (2026-09-14 EMA fix)
     vol_ma20 = sma(volumes, 20)
 
     checks, entry_confirmed = entry_checks(closes, volumes, bars, rsis=rsis)
@@ -110,7 +115,7 @@ def main():
         "settled": exclude_last_bar,
         "close": closes[-1],
         "rsi20": round(rsi_now, 2) if rsi_now is not None else None,
-        "rsi20_2bars_ago": round(rsi_prev2, 2) if rsi_prev2 is not None else None,
+        "rsi20_1bar_ago": round(rsi_prev, 2) if rsi_prev is not None else None,
         "ma50": round(ma50, 2) if ma50 is not None else None,
         "ma150": round(ma150, 2) if ma150 is not None else None,
         "volume": volumes[-1],

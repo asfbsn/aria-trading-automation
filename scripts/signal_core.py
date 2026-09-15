@@ -7,31 +7,26 @@ Keep this module dependency-free (no pandas/numpy) so the live path stays lean.
 Rule (mirrors prompts/bull-put-spread.md):
   Default live gate requires all five checks:
   1. rsi_below_50: RSI(20) < 50
-  2. rsi_rising: RSI(20) net change vs 2 bars ago (rsi_now > rsis[-3]) --
-     DELIBERATE DIVERGENCE from the live indicator, kept for backtested
-     performance, not for dashboard fidelity. This is a 2-bar net-change
-     filter, not a strictly-stricter version of a 1-bar check -- the two
-     only disagree on a V-shaped bottom (RSI fell then partially recovered),
-     where 1-bar-ago reads "rising" off the recent trough but 2-bar-ago
-     still reads "falling" against the pre-drop level; on a monotonic
-     recovery the two agree. Live Pine-table cross-checks on OMC/EW/FHN on
-     2026-09-10 (via tradingview-bridge, price-sanity-verified against
-     quote_get) hit exactly that V-shaped-bottom case and confirmed Adi's
-     real dashboard uses the 1-bar-ago comparison, not 2 -- our 2-bar code
-     read "falling" there, the opposite of the live read. A/B
-     backtested both on the same 36-ticker/2023-07-26->2026-07-26 universe,
-     same everything else, "current" tier (this default 5-key gate):
+  2. rsi_rising: RSI(20) rising vs 1 bar ago (rsi_now > rsis[-2]).
+     The deliberate 2-bar divergence was kept for backtest performance,
+     then reverted per explicit 2026-09-14 policy: a live BX divergence
+     cost real-money trust; dashboard fidelity now strictly overrides
+     backtested edge. Historical record (no longer the deciding factor):
+     live Pine-table cross-checks on OMC/EW/FHN on 2026-09-10 confirmed
+     the dashboard uses 1 bar ago. At a V-shaped bottom, 1-bar reads
+     rising off the trough while 2-bar can still read falling against
+     the pre-drop level. A/B backtests used the same
+     36-ticker/2023-07-26->2026-07-26 universe, same everything else,
+     "current" tier (this default 5-key gate):
      1-bar (dashboard-accurate): 842 trades, 47.82% win, +0.70% return,
        -9.68% max drawdown, Sharpe 0.071.
-     2-bar (this code): 718 trades, 47.43% win, +1.59% return,
+     2-bar (historical divergence): 718 trades, 47.43% win, +1.59% return,
        -6.73% max drawdown, Sharpe 0.137.
-     Kept 2-bar: acts as a stricter momentum-turn filter than the live
-     indicator's 1-bar comparison, and backtests meaningfully better on
-     return, drawdown, and Sharpe despite not matching the real dashboard.
-     See git history 2026-09-10 for the full investigation.
+     These historical return, drawdown, and Sharpe results no longer
+     decide policy. See git history 2026-09-10 for the investigation.
   3. above_ma150: close > MA150 (strict)
   4. near_ma150_support: close is 0%-10% above MA150 (inclusive)
-  5. bullish_candle: any green close (close > open)
+  5. bullish_candle: strict hammer or bullish-engulfing pattern
 
   above_ma150 is redundant with near_ma150_support in all but one case --
   near_ma150_support's band lower bound is 0.0 (close >= ma150), so the
@@ -42,6 +37,26 @@ Rule (mirrors prompts/bull-put-spread.md):
   2026-09-09, cheap to close so it's closed rather than left as a known
   edge case.
 
+  MA150 IS EMA, NOT SMA (fixed 2026-09-14, BX investigation):
+  On 2026-09-14, BX (close 128.10) evaluated near_ma150_support as TRUE under
+  the old SMA150 (=123.70, close +3.55% above), but the live TradingView
+  'Adi option swing 2.0' dashboard showed NO support (red/failed). Root-cause
+  investigation ruled out dividend adjustment (IBKR returns raw prices; BX's
+  trailing dividends are both too small and the wrong sign to explain this)
+  and bar-timing (settled close 128.51 vs SMA150 123.71 is +3.88%, same
+  reading as provisional -- not a settled/provisional issue). Directly
+  computed EMA150 on BX's real 219-bar series: 132.02 -- close is -2.97%
+  BELOW EMA150, i.e. NO support, exactly matching the live dashboard. A
+  150-bar SMA still equal-weights an old high plateau that an EMA has
+  already discounted; over BX's ~6-week decline this produced a full sign
+  flip (close +3.55% vs SMA150, -2.97% vs EMA150 -- a 6.5-point swing).
+  MA50 checks were verified NOT to have this problem (SMA50/EMA50 diverge by
+  only 0.09% on the same data -- a 6-week decline is short relative to a
+  50-day window) and are left on sma() unchanged. All four ma150 = sma(...)
+  call sites in this file (entry_checks, bear_entry_checks, exit_checks,
+  bear_exit_checks) now use ema() instead, per this same 2026-09-14
+  dashboard-fidelity policy that drove the RSI/candle reverts above.
+
   near_ma50_pullback and volume_above_avg are still computed and
   reported, but do not gate by default. A live TradingView Pine-table
   read against the real 'Adi option swing 2.0' dashboard on 2026-09-09
@@ -51,13 +66,15 @@ Rule (mirrors prompts/bull-put-spread.md):
   status was never tested, so excluding it is a specification choice,
   not a proven dashboard match.
 
-  bullish_candle is deliberately retained as an intentional divergence
-  for backtested edge, not because it matches the dashboard. Commit
-  05d60b2 found $116.21/mo loose-candle vs $38.90/mo strict-candle with
-  the full R/R + $3k Global Heap Allocator and strike-only exit below;
-  both configurations had a candle gate. No candle gate at all has never
-  been backtested. The strict hammer/bullish-engulfing candle_pattern is
-  still computed and reported for visibility, but does not gate entry.
+  bullish_candle was loosened 2026-09-05 to any green close for
+  backtested edge. Historical record: commit 05d60b2 found $116.21/mo
+  loose-candle vs $38.90/mo strict-candle with the full R/R + $3k Global
+  Heap Allocator and strike-only exit below; both had a candle gate.
+  No candle gate at all has never been backtested. Strict hammer/
+  bullish-engulfing is reinstated per explicit 2026-09-14 policy:
+  a live BX divergence cost real-money trust; dashboard fidelity now
+  strictly overrides backtested edge. Historical numbers are preserved
+  for record and are no longer the deciding factor.
 
 Exit rule:
   - Thesis invalidation = close below short strike ONLY (hard). MA150 breach
@@ -142,6 +159,37 @@ def sma(values, length):
     return sum(values[-length:]) / length
 
 
+def ema(values, length):
+    """Seeds from the SMA of the OLDEST `length` values, then smooths forward
+    through whatever remains. Standard technique for a finite series with no
+    "true" starting point -- but the seed's residual influence only decays
+    with however many bars come after it, and callers here are bounded by how
+    much history was actually fetched.
+
+    KNOWN LIMITATION (found by CodeRabbit review, 2026-09-14 EMA-fidelity
+    fix): the live scan's Phase B pulls "at least 220 daily bars" (see
+    prompts/bull-put-spread.md), so for length=150 that's only ~70 bars of
+    convergence past the SMA seed. At EMA150's alpha (2/151 ~= 0.0132), the
+    seed's weight after 70 periods is (1-0.0132)^70 ~= 0.40 -- ~40% residual
+    SMA influence, well short of a dashboard EMA computed over years of
+    history. This is NOT hypothetical: it's the same mechanism (a seeded,
+    non-fully-converged EMA) as the fix itself, just a shallower version of
+    it. It was NOT re-validated against the BX case with a longer window --
+    the BX fix was checked under this exact 220-bar regime and correctly
+    matched the real dashboard there (see module docstring's BX section), so
+    this is a known-bounded gap, not a demonstrated live error. Deliberately
+    left as-is rather than fetching more IBKR history per finalist ticker
+    (token/API cost tradeoff) -- revisit if a live signal is ever found wrong
+    near an above_ma150/near_ma150_support boundary."""
+    if len(values) < length:
+        return None
+    k = 2.0 / (length + 1)
+    e = sum(values[:length]) / length
+    for v in values[length:]:
+        e = v * k + e * (1 - k)
+    return e
+
+
 def rsi_series(closes, length=RSI_LENGTH):
     """Wilder-smoothed RSI, one value per bar (None where undefined)."""
     n = len(closes)
@@ -221,14 +269,16 @@ def entry_checks(
     if rsis is None:
         rsis = rsi_series(closes)
     rsi_now = rsis[-1]
-    # DELIBERATE DIVERGENCE: Intentionally using a 2-bar lookback as a
-    # stricter noise filter. Empirical backtesting proves 2-bar significantly
-    # improves Sharpe and reduces max drawdown compared to the live 1-bar
-    # indicator.
-    rsi_prev2 = rsis[-3] if len(rsis) >= 3 else None
+    # HISTORICAL DELIBERATE DIVERGENCE: 2-bar was kept for backtest performance.
+    # Reverted to 1-bar per explicit 2026-09-14 policy after a live BX divergence
+    # cost real-money trust: dashboard fidelity strictly overrides backtested edge.
+    # Historical 1-bar/2-bar: 842/718 trades, 47.82%/47.43% win, +0.70%/+1.59%
+    # return, -9.68%/-6.73% max drawdown, Sharpe 0.071/0.137 (OMC/EW/FHN
+    # context in module docstring). Preserved for record, no longer deciding.
+    rsi_prev = rsis[-2] if len(rsis) >= 2 else None
 
     ma50 = sma(closes, 50)
-    ma150 = sma(closes, 150)
+    ma150 = ema(closes, 150)
     vol_ma20 = sma(volumes, VOLUME_MA_LENGTH)
 
     close = closes[-1]
@@ -240,8 +290,8 @@ def entry_checks(
     checks = {
         "above_ma150": ma150 is not None and close > ma150,  # rule 1
         "rsi_below_50": rsi_now is not None and rsi_now < RSI_THRESHOLD,
-        "rsi_rising": (rsi_now is not None and rsi_prev2 is not None
-                       and rsi_now > rsi_prev2),
+        "rsi_rising": (rsi_now is not None and rsi_prev is not None
+                       and rsi_now > rsi_prev),
         "near_ma50_pullback": (below_ma50_pct is not None
                                 and MA50_BAND[0] <= below_ma50_pct <= MA50_BAND[1]),
         "near_ma150_support": (above_ma150_pct is not None
@@ -253,10 +303,8 @@ def entry_checks(
         bars[-2]["open"] if len(bars) >= 2 else None,
         bars[-2]["close"] if len(bars) >= 2 else None,
     )
-    # bullish_candle gate loosened 2026-09-05: any green close (close > open),
-    # not the strict hammer/bullish-engulfing pattern -- see module docstring.
-    # candle_pattern is still computed and reported for visibility.
-    checks["bullish_candle"] = bars[-1]["close"] > bars[-1]["open"]
+    # Strict pattern reinstated per 2026-09-14 policy -- see module docstring.
+    checks["bullish_candle"] = pattern != "none"
     checks["candle_pattern"] = pattern
 
     # Gate confirmation: default (None, None) requires all of DEFAULT_GATE_KEYS.
@@ -315,7 +363,7 @@ def bear_entry_checks(
     """Mirror of entry_checks() for Bear Call Spreads — geometric flip of every
     rule, not a different strategy:
       1. close < MA150                            (never short resistance from above)
-      2. RSI(20) > 50 and falling vs 2 bars ago
+      2. RSI(20) > 50 and falling vs 1 bar ago
       3. close is ABOVE MA50 by 0%-10%, AND BELOW MA150 by 0%-10% (rallying up
          toward the MA150 ceiling from below, squeeze between the two averages)
       4. volume > 20-bar volume MA
@@ -330,10 +378,10 @@ def bear_entry_checks(
     if rsis is None:
         rsis = rsi_series(closes)
     rsi_now = rsis[-1]
-    rsi_prev2 = rsis[-3] if len(rsis) >= 3 else None
+    rsi_prev = rsis[-2] if len(rsis) >= 2 else None
 
     ma50 = sma(closes, 50)
-    ma150 = sma(closes, 150)
+    ma150 = ema(closes, 150)
     vol_ma20 = sma(volumes, VOLUME_MA_LENGTH)
 
     close = closes[-1]
@@ -345,8 +393,8 @@ def bear_entry_checks(
     checks = {
         "below_ma150": ma150 is not None and close < ma150,
         "rsi_above_50": rsi_now is not None and rsi_now > RSI_THRESHOLD,
-        "rsi_falling": (rsi_now is not None and rsi_prev2 is not None
-                        and rsi_now < rsi_prev2),
+        "rsi_falling": (rsi_now is not None and rsi_prev is not None
+                        and rsi_now < rsi_prev),
         "near_ma50_rejection": (above_ma50_pct is not None
                                  and MA50_BAND[0] <= above_ma50_pct <= MA50_BAND[1]),
         "near_ma150_resistance": (below_ma150_pct is not None
@@ -386,7 +434,7 @@ def bear_exit_checks(closes, bars, short_strike, rsis=None):
     if rsis is None:
         rsis = rsi_series(closes)
     rsi_now = rsis[-1]
-    ma150 = sma(closes, 150)
+    ma150 = ema(closes, 150)
     close = closes[-1]
     volumes = [b["volume"] for b in bars]
     vol_ma20 = sma(volumes, VOLUME_MA_LENGTH)
@@ -428,7 +476,7 @@ def exit_checks(closes, bars, short_strike, rsis=None):
     if rsis is None:
         rsis = rsi_series(closes)
     rsi_now = rsis[-1]
-    ma150 = sma(closes, 150)
+    ma150 = ema(closes, 150)
     close = closes[-1]
     volumes = [b["volume"] for b in bars]
     vol_ma20 = sma(volumes, VOLUME_MA_LENGTH)

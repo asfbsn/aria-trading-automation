@@ -26,6 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from signal_core import (
     MIN_BARS,
     RSI_LENGTH,
+    ema,
     entry_checks,
     rsi_series,
     sma,
@@ -173,7 +174,7 @@ def main():
         rsi_now = rsis[-1]
 
         ma50 = sma(closes, 50)
-        ma150 = sma(closes, 150)
+        ma150 = ema(closes, 150)  # must match entry_checks()'s EMA150 (2026-09-14 fidelity fix)
         close = closes[-1]
 
         checks, entry_confirmed = entry_checks(closes, volumes, bars, rsis=rsis)
