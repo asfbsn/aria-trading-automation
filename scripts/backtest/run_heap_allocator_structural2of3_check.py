@@ -44,7 +44,10 @@ def main():
     n_rr = rr_check["rr_rank"].notna().sum()
     print(f"R/R-compliant [1.5,2.5] (any width): {n_rr}")
 
-    # De-dup: count distinct clusters (same code, entry dates within 5 trading days)
+    # De-dup: count distinct clusters (same code, entry dates within 5 calendar
+    # days -- (d - last).days counts calendar days, not trading days; a
+    # weekend inside the gap can put two entries 6 calendar days apart into
+    # separate clusters even though only ~4 trading days separate them)
     rr_df = rr_check[rr_check["rr_rank"].notna()][["code", "entry_date"]].copy()
     rr_df["entry_date"] = pd.to_datetime(rr_df["entry_date"])
     rr_df = rr_df.sort_values(["code", "entry_date"])
@@ -56,7 +59,7 @@ def main():
             if last is None or (d - last).days > 5:
                 clusters += 1
             last = d
-    print(f"De-duplicated clusters (>5 trading days apart): {clusters}")
+    print(f"De-duplicated clusters (>5 calendar days apart): {clusters}")
 
     months = 36.0
     print(f"\nRaw signal frequency: {len(merged)/months:.1f}/month (undeduped), {clusters/months:.1f}/month (deduped clusters)")

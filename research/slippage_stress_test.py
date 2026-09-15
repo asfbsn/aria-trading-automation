@@ -159,7 +159,13 @@ def simulate_stop_only_slippage(entry, price_df, k_long, slippage_per_leg):
         iv_long = iv_smile_adjustment(S, k_long, hv, IV_SKEW, IV_CURVATURE)
         mid_cost = bs_price(S, k_short, T, RISK_FREE, iv_short, "put") - bs_price(S, k_long, T, RISK_FREE, iv_long, "put")
         if (credit - mid_cost) / credit >= 0.80:
-            return {"exit_date": d, "pnl": (credit - mid_cost) * 100.0, "credit": credit}
+            # This models a resting GTC buy-to-close limit at 20% of entry
+            # credit, not a market order -- it fills AT that limit, not at
+            # whatever better midpoint the daily close happened to hit that
+            # triggered it (no intraday path is simulated here, so the mid
+            # could have gapped well past 20% before this daily check runs).
+            # Booking mid_cost overstates P&L with no fill evidence for it.
+            return {"exit_date": d, "pnl": credit * 0.80 * 100.0, "credit": credit}
         if S < k_short:
             cost_to_close = mid_cost + 2.0 * slippage_per_leg
             return {"exit_date": d, "pnl": (credit - cost_to_close) * 100.0, "credit": credit}

@@ -11,6 +11,7 @@ comparable.
 """
 import contextlib
 import csv
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -48,7 +49,17 @@ class YFLoader:
         )
         for code in codes:
             try:
-                df = raw[code].copy() if isinstance(raw.columns, pd.MultiIndex) else raw.copy()
+                if isinstance(raw.columns, pd.MultiIndex):
+                    df = raw[code].copy()
+                elif len(codes) == 1:
+                    df = raw.copy()
+                else:
+                    # yf.download flattens columns instead of returning a
+                    # MultiIndex when only one of many requested tickers has
+                    # data -- raw.copy() here would silently hand every code
+                    # the SAME single-ticker frame (1591 identical series).
+                    print(f"WARN: unexpected flat columns for {code}", file=sys.stderr)
+                    continue
             except KeyError:
                 continue
             if df is None or df.empty or df["Close"].dropna().empty:
