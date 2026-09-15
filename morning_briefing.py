@@ -151,6 +151,33 @@ def parse_exit_guard_report() -> dict:
     }
 
 
+ORDERS_CHECKED_RE = re.compile(r"^ORDERS_CHECKED:\s*(\d+)")
+GTC_ESCALATION_RE = re.compile(r"^\U0001F6A8\s*\[ACTION REQUIRED.*$")
+
+
+def parse_gtc_guard_report() -> dict:
+    """gtc-guard.sh's report -- see prompts/gtc-order-guard.md for the exact
+    contract. No per-order verdict= line like exit-guard's; just a live-order
+    count (ORDERS_CHECKED: N, same completeness-gate discipline as
+    parse_exit_guard_report()) plus optional stale-order escalation lines
+    (literal '\U0001F6A8 [ACTION REQUIRED...') this briefing surfaces
+    verbatim -- those are exactly what needs eyes before the open."""
+    path = LOG_DIR / f"{TODAY}_gtc-guard.md"
+    if not path.exists():
+        return {"available": False}
+    text = path.read_text(encoding="utf-8")
+    non_empty_lines = [ln for ln in text.splitlines() if ln.strip()]
+    if not non_empty_lines or not ORDERS_CHECKED_RE.fullmatch(non_empty_lines[-1].strip()):
+        return {"available": False}
+    orders_checked = int(ORDERS_CHECKED_RE.fullmatch(non_empty_lines[-1].strip()).group(1))
+    escalations = [ln.strip() for ln in text.splitlines() if GTC_ESCALATION_RE.match(ln.strip())]
+    return {
+        "available": True,
+        "orders_checked": orders_checked,
+        "escalations": escalations,
+    }
+
+
 def fetch_macro_facts() -> str:
     """Plain facts, no forecast, no verdict -- see module docstring for why
     this is deliberately not research/timesfm_macro_radar.py."""
@@ -174,7 +201,7 @@ def fetch_macro_facts() -> str:
         return "Macro: fetch failed -- verify manually."
 
 
-def format_message(macro: str, exit_report: dict) -> str:
+def format_message(macro: str, exit_report: dict, gtc_report: dict) -> str:
     lines = [f"\U0001F305 ARIA Morning Briefing -- {TODAY}", "", "MACRO (informational only):", macro, ""]
 
     if not exit_report["available"]:
@@ -195,6 +222,17 @@ def format_message(macro: str, exit_report: dict) -> str:
             lines.append("Other open positions (WATCH/HOLD, no action needed):")
             for p in exit_report["watch_hold"]:
                 lines.append(f"  {p['ticker']}: {p['verdict']}")
+
+    lines.append("")
+    if not gtc_report["available"]:
+        lines.append("GTC-GUARD: no report for today yet -- either it hasn't run, or "
+                      "failed. Check live orders manually before the open.")
+    else:
+        lines.append(f"LIVE ORDERS: {gtc_report['orders_checked']}")
+        if gtc_report["escalations"]:
+            lines.append("")
+            for line in gtc_report["escalations"]:
+                lines.append(f"  {line}")
 
     return "\n".join(lines)
 
@@ -253,8 +291,9 @@ def main() -> int:
 
         env = load_env()
         exit_report = parse_exit_guard_report()
+        gtc_report = parse_gtc_guard_report()
         macro = fetch_macro_facts()
-        message = format_message(macro, exit_report)
+        message = format_message(macro, exit_report, gtc_report)
 
         LOG_FILE.write_text(message + "\n", encoding="utf-8")
 
