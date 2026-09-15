@@ -240,13 +240,19 @@ def _validate_gate_thresholds(min_structural, min_confirm, structural_keys, conf
     (legacy all-required behavior) or an int in [0, len(its key tuple)] —
     a negative or over-length value can never be satisfied or is trivially
     always satisfied, either way silently wrong rather than a clear error."""
-    if min_structural is not None and not (0 <= min_structural <= len(structural_keys)):
+    if min_structural is not None and (
+        type(min_structural) is not int
+        or not 0 <= min_structural <= len(structural_keys)
+    ):
         raise ValueError(
-            f"min_structural must be None or in [0, {len(structural_keys)}], got {min_structural}"
+            f"min_structural must be None or an int in [0, {len(structural_keys)}], got {min_structural!r}"
         )
-    if min_confirm is not None and not (0 <= min_confirm <= len(confirm_keys)):
+    if min_confirm is not None and (
+        type(min_confirm) is not int
+        or not 0 <= min_confirm <= len(confirm_keys)
+    ):
         raise ValueError(
-            f"min_confirm must be None or in [0, {len(confirm_keys)}], got {min_confirm}"
+            f"min_confirm must be None or an int in [0, {len(confirm_keys)}], got {min_confirm!r}"
         )
 
 
