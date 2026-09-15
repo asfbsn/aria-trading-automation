@@ -218,5 +218,8 @@ is unchanged at 50%, single-name worst case is bounded at ~25%, two
 correlated breaches still costs up to 50% in one stroke — with
 **strict sector diversification** (one spread per sector);
 default exit = **GTC buy-to-close at 20% of received credit (80% capture)**, plus
-stop on a close below the short strike or MA150 and a DTE≤7 time stop — the same
-thresholds `exit-guard.sh` monitors.
+a hard stop on a close below the short strike and a DTE≤7 time stop — the same
+thresholds `exit-guard.sh` monitors. A close below MA150 is advisory only
+(surfaces as RECOMMEND EXIT, not an automatic CLOSE) — `signal_core.py`'s
+`exit_checks()` locks the hard-CLOSE gate to strike-only (see its docstring
+for why a combined strike-or-MA150 hard stop was tested and rejected).
