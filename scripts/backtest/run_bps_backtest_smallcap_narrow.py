@@ -58,7 +58,15 @@ class YFLoader:
         )
         for code in codes:
             try:
-                df = raw[code].copy() if isinstance(raw.columns, pd.MultiIndex) else raw.copy()
+                if isinstance(raw.columns, pd.MultiIndex):
+                    df = raw[code].copy()
+                elif len(codes) == 1:
+                    df = raw.copy()
+                else:
+                    # Flat columns for a >1-ticker request: raw.copy() would
+                    # assign the SAME frame to every remaining code.
+                    print(f"WARN: unexpected flat columns for {code}", file=sys.stderr)
+                    continue
             except KeyError:
                 continue
             if df is None or df.empty or df["Close"].dropna().empty:

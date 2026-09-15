@@ -74,7 +74,13 @@ def fetch_price_data(tickers: list[str], start: str, end: str) -> dict[str, pd.D
                        group_by="ticker", threads=True)
     for code in tickers:
         try:
-            df = raw[code].copy() if isinstance(raw.columns, pd.MultiIndex) else raw.copy()
+            if isinstance(raw.columns, pd.MultiIndex):
+                df = raw[code].copy()
+            elif len(tickers) == 1:
+                df = raw.copy()
+            else:
+                print(f"WARN: unexpected flat columns for {code}", file=sys.stderr)
+                continue
         except KeyError:
             continue
         if df is None or df.empty or df["Close"].dropna().empty:
@@ -86,6 +92,14 @@ def fetch_price_data(tickers: list[str], start: str, end: str) -> dict[str, pd.D
         df["hv30"] = historical_volatility(df["close"])
         data_map[code] = df
     return data_map
+
+
+def _cost_to_close(S, hv, T, k_short, k_long):
+    iv_short = iv_smile_adjustment(S, k_short, hv, IV_SKEW, IV_CURVATURE)
+    iv_long = iv_smile_adjustment(S, k_long, hv, IV_SKEW, IV_CURVATURE)
+    short_p = bs_price(S, k_short, T, RISK_FREE, iv_short, "put")
+    long_p = bs_price(S, k_long, T, RISK_FREE, iv_long, "put")
+    return short_p - long_p
 
 
 def simulate_one(entry: pd.Series, price_df: pd.DataFrame, variant: dict) -> dict | None:
@@ -101,22 +115,21 @@ def simulate_one(entry: pd.Series, price_df: pd.DataFrame, variant: dict) -> dic
     if len(dates) == 0:
         return None
 
-    for d in dates:
+    for idx, d in enumerate(dates):
         S = price_df.at[d, "close"]
         ma150 = price_df.at[d, "ma150"]
         hv = price_df.at[d, "hv30"]
         if pd.isna(S) or pd.isna(hv) or hv <= 0:
             continue
         T = max((expiry - d).days / 365.0, 0.001)
-
-        iv_short = iv_smile_adjustment(S, k_short, hv, IV_SKEW, IV_CURVATURE)
-        iv_long = iv_smile_adjustment(S, k_long, hv, IV_SKEW, IV_CURVATURE)
-        short_p = bs_price(S, k_short, T, RISK_FREE, iv_short, "put")
-        long_p = bs_price(S, k_long, T, RISK_FREE, iv_long, "put")
-        cost_to_close = short_p - long_p
+        cost_to_close = _cost_to_close(S, hv, T, k_short, k_long)
         captured = (credit - cost_to_close) / credit
 
         if variant["tp"] and captured >= 0.80:
+            # A resting GTC limit fills whenever the market touches it --
+            # no next-session lag the way a daily human decision has, so
+            # same-day pricing here is the correct model (matches
+            # slippage_stress_test.py's calibrated TP).
             pnl = (credit - cost_to_close) * 100.0 - COMMISSION_PER_SPREAD
             return {"code": code, "entry_date": entry_date, "exit_date": d,
                     "exit_reason": "TP", "pnl": pnl}
@@ -126,9 +139,29 @@ def simulate_one(entry: pd.Series, price_df: pd.DataFrame, variant: dict) -> dic
         if ma150_breach or strike_breach:
             reason = "STOP_MA150" if ma150_breach and not strike_breach else (
                 "STOP_STRIKE" if strike_breach and not ma150_breach else "STOP_BOTH")
-            pnl = (credit - cost_to_close) * 100.0 - COMMISSION_PER_SPREAD
-            return {"code": code, "entry_date": entry_date, "exit_date": d,
-                    "exit_reason": reason, "pnl": pnl}
+            # The live exit-guard reads the settled PRIOR close to decide --
+            # it can only act on the NEXT session, not at the exact price
+            # that caused the breach. Pricing the exit at bar d's own close
+            # lets a stop dodge the overnight gap a real next-morning close
+            # is exposed to; price at d+1 instead (settling at expiry if this
+            # breach lands on the last available bar, or the next session's
+            # data is unusable).
+            next_idx = idx + 1
+            if next_idx < len(dates):
+                d_exit = dates[next_idx]
+                S_exit = price_df.at[d_exit, "close"]
+                hv_exit = price_df.at[d_exit, "hv30"]
+                if not pd.isna(S_exit) and not pd.isna(hv_exit) and hv_exit > 0:
+                    T_exit = max((expiry - d_exit).days / 365.0, 0.001)
+                    cost_exit = _cost_to_close(S_exit, hv_exit, T_exit, k_short, k_long)
+                    pnl = (credit - cost_exit) * 100.0 - COMMISSION_PER_SPREAD
+                    return {"code": code, "entry_date": entry_date, "exit_date": d_exit,
+                            "exit_reason": reason, "pnl": pnl}
+            S_T = price_df.at[dates[-1], "close"]
+            payoff_per_share = credit - max(0.0, k_short - S_T) + max(0.0, k_long - S_T)
+            pnl = payoff_per_share * 100.0 - COMMISSION_PER_SPREAD
+            return {"code": code, "entry_date": entry_date, "exit_date": dates[-1],
+                    "exit_reason": f"{reason}_EXPIRY_FALLBACK", "pnl": pnl}
 
     # Never triggered TP or stop -> settle at expiry via intrinsic payoff
     last_date = dates[-1]
