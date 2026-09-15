@@ -176,14 +176,19 @@ Two separate tests, same day, both pointing the same direction:
    reinforce than overturn "not significant."
 
 **The combined read:** loosening the confirmation checks (volume, candle
-pattern, RSI-rising) does *not* make the underlying more likely to drift
-away from support — frequency of structural weakness is unchanged. But it
-does destroy the spread's P&L edge. That rules out "the looser gate just
-lets in more names that wander off support" as the mechanism. What's left:
-the confirmation checks are gating something the structural checks alone
-miss — likely entry-timing/premium quality, or the *severity* of the
+pattern, RSI-rising) does *not* produce a statistically significant change
+in how often the underlying drifts away from support — frequency of
+structural weakness (measured here, by this test) looks the same across
+tiers. But it does destroy the spread's P&L edge. That's evidence against
+"the looser gate just lets in more names that wander off support" as the
+full explanation, since breach *frequency* alone doesn't move -- but this
+test only measures frequency, not severity, timing, premium quality, or
+fill quality, and can't rule out directional drift the frequency measure
+is too coarse to catch. It does NOT establish what the confirmation checks
+ARE gating instead: entry-timing/premium quality, or the *severity* of the
 support breaches that do occur (a volatility-crush / bad-fill kind of
-failure) rather than their frequency (pure directional drift). The 7-of-7
-gate is kept not just because it backtests better, but because these two
-independent tests together localize *why*: the edge lives in confirmation
-quality, not in avoiding drift.
+failure), are hypotheses this result is consistent with, not mechanisms it
+proves. The 7-of-7 gate is kept because it backtests better; these two
+tests narrow *what kind of explanation* is still on the table for why, not
+localize the actual mechanism -- that needs a test that actually measures
+severity/timing/fill quality, not just breach frequency.
