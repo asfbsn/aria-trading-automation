@@ -168,7 +168,16 @@ case "$BACKEND" in
       jq --arg m "$ORIGINAL_MODEL" '.model = $m' "$AGY_SETTINGS" > "$AGY_SETTINGS.tmp" \
         && mv "$AGY_SETTINGS.tmp" "$AGY_SETTINGS"
     }
+    # EXIT alone isn't reliably enough: a SIGINT/SIGTERM during the long-
+    # running (up to 30m) agy call below can terminate the script before
+    # the EXIT trap runs, leaving settings.json on the temporarily-swapped
+    # model -- every later agy call anywhere, not just this script, then
+    # runs on the wrong model until someone notices. restore_model() is
+    # idempotent (writes the same original value again), safe to run twice
+    # if EXIT still also fires.
     trap restore_model EXIT
+    trap 'restore_model; exit 130' INT
+    trap 'restore_model; exit 143' TERM HUP
 
     jq --arg m "$MODEL" '.model = $m' "$AGY_SETTINGS" > "$AGY_SETTINGS.tmp" \
       && mv "$AGY_SETTINGS.tmp" "$AGY_SETTINGS"
