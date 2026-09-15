@@ -76,7 +76,13 @@ def simulate_stop_only_slippage(entry, price_df, k_long, slippage_per_leg, tp_th
         iv_long = iv_smile_adjustment(S, k_long, hv, IV_SKEW, IV_CURVATURE)
         mid_cost = bs_price(S, k_short, T, RISK_FREE, iv_short, "put") - bs_price(S, k_long, T, RISK_FREE, iv_long, "put")
         if (credit - mid_cost) / credit >= tp_threshold:
-            return {"exit_date": d, "pnl": (credit - mid_cost) * 100.0, "credit": credit}
+            # Resting GTC buy-to-close limit at (1 - tp_threshold) of entry
+            # credit -- fills AT the limit, not at the daily close mid (which
+            # can gap well past it with no intraday path simulated). Matches
+            # slippage_stress_test.py's calibrated TP booking; booking
+            # mid_cost here would overstate P&L with no fill evidence for it,
+            # same bug that file already had fixed.
+            return {"exit_date": d, "pnl": credit * tp_threshold * 100.0, "credit": credit}
         if S < k_short:
             cost_to_close = mid_cost + 2.0 * slippage_per_leg
             return {"exit_date": d, "pnl": (credit - cost_to_close) * 100.0, "credit": credit}
