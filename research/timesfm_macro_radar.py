@@ -103,6 +103,30 @@ def fetch_close_series(ticker: str, period: str = FETCH_PERIOD) -> np.ndarray:
     return values
 
 
+def fetch_close_series_dated(ticker: str, period: str = FETCH_PERIOD) -> "pd.Series":
+    """Like fetch_close_series() but keeps the date index -- for callers that
+    need to align two tickers' histories by actual trading date rather than
+    by tail position (a single missing bar in one series, e.g. a
+    holiday/data-gap SPY has that ^VIX doesn't or vice versa, silently shifts
+    every subsequent tail-aligned value by one day). fetch_close_series()
+    itself is left untouched: the live shadow-mode script (main(), below)
+    only needs each ticker's own most-recent trailing window "as of now" --
+    no cross-ticker historical alignment risk there. This variant exists for
+    timesfm_macro_radar_backtest.py's multi-year window construction, where
+    that risk compounds badly."""
+    import pandas as pd
+
+    df = yf.download(ticker, period=period, progress=False, auto_adjust=True)
+    if df is None or df.empty:
+        raise RuntimeError(f"No data returned for {ticker}")
+    close = df["Close"].dropna()
+    if hasattr(close, "squeeze"):
+        close = close.squeeze()
+    if len(close) < 30:
+        raise RuntimeError(f"Suspiciously short history for {ticker}: {len(close)} points")
+    return close.astype(np.float32)
+
+
 def build_model():
     import timesfm
     model = timesfm.TimesFM_2p5_200M_torch.from_pretrained(MODEL_CHECKPOINT, torch_compile=False)

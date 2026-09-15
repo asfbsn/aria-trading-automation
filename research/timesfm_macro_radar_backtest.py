@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from timesfm_macro_radar import (  # noqa: E402
     CONTEXT_MAX, HORIZON, SPY_DRAWDOWN_HALT_PCT, build_model,
-    evaluate_macro_signal, fetch_close_series,
+    evaluate_macro_signal, fetch_close_series_dated,
 )
 
 MAX_HISTORY_PERIOD = "10y"  # more than enough for CONTEXT_MAX + many windows
@@ -33,11 +33,17 @@ MAX_HISTORY_PERIOD = "10y"  # more than enough for CONTEXT_MAX + many windows
 
 def main():
     print("Fetching full SPY/VIX history for backtest...", flush=True)
-    spy_full = fetch_close_series("SPY", period=MAX_HISTORY_PERIOD)
-    vix_full = fetch_close_series("^VIX", period=MAX_HISTORY_PERIOD)
-    n = min(len(spy_full), len(vix_full))
-    spy_full, vix_full = spy_full[-n:], vix_full[-n:]
-    print(f"History length: {n} trading days", flush=True)
+    spy_series = fetch_close_series_dated("SPY", period=MAX_HISTORY_PERIOD)
+    vix_series = fetch_close_series_dated("^VIX", period=MAX_HISTORY_PERIOD)
+    # Join on the actual trading date, not tail position -- SPY and ^VIX
+    # histories can differ by a holiday/data gap, and a single missing bar
+    # would otherwise shift every subsequent tail-aligned value by one day
+    # for the rest of the backtest (CodeRabbit finding, 2026-09-15).
+    common_dates = spy_series.index.intersection(vix_series.index)
+    spy_full = spy_series.loc[common_dates].to_numpy()
+    vix_full = vix_series.loc[common_dates].to_numpy()
+    n = len(common_dates)
+    print(f"History length: {n} trading days (date-aligned)", flush=True)
 
     print("Loading TimesFM 2.5...", flush=True)
     model = build_model()
