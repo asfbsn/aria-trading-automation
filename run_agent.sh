@@ -178,7 +178,8 @@ case "$BACKEND" in
     # if EXIT still also fires.
     trap restore_model EXIT
     trap 'restore_model; exit 130' INT
-    trap 'restore_model; exit 143' TERM HUP
+    trap 'restore_model; exit 143' TERM
+    trap 'restore_model; exit 129' HUP
 
     jq --arg m "$MODEL" '.model = $m' "$AGY_SETTINGS" > "$AGY_SETTINGS.tmp" \
       && mv "$AGY_SETTINGS.tmp" "$AGY_SETTINGS"
