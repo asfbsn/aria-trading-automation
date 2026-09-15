@@ -98,7 +98,15 @@ def simulate_bounce_exit(entry, price_df, k_long, circuit_breaker_pct=CIRCUIT_BR
             if captured >= 0.80:
                 return {"exit_date": d, "pnl": (credit - cost_to_close) * 100.0, "credit": credit, "reason": "TP"}
             if S < k_short:
-                pending = True  # breach day -- do NOT exit, enter Pending Exit
+                # Breach day: check the circuit breaker BEFORE entering
+                # Pending Exit -- a gap that breaches the strike AND already
+                # clears the circuit-breaker threshold in the same session
+                # must fire immediately, not wait for a later day (CodeRabbit
+                # finding, 2026-09-15 -- `continue` here was skipping the
+                # same-day check entirely, understating losses on gap days).
+                if S < k_short * (1.0 - circuit_breaker_pct):
+                    return {"exit_date": d, "pnl": (credit - cost_to_close) * 100.0, "credit": credit, "reason": "CIRCUIT_BREAKER"}
+                pending = True  # breach day, not yet past breaker -- enter Pending Exit
                 continue
         else:
             if S < k_short * (1.0 - circuit_breaker_pct):
