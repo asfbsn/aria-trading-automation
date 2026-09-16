@@ -107,6 +107,19 @@ if [ -z "$PROMPT" ]; then
   exit 2
 fi
 
+# graft is session-scoped, not repo-scoped — a delegated backend (opencode/
+# agy/codex, each its own process) has zero visibility into this session's
+# context and will default to grep/rg unless explicitly told to use graft.
+# Structural fix instead of relying on the caller to remember the line every
+# time: auto-prepend it whenever this repo is graft-indexed and the caller
+# hasn't already mentioned graft themselves.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$SCRIPT_DIR/graft/INDEX.md" ] && [[ "$PROMPT" != *graft* ]]; then
+  PROMPT="This repo is indexed by graft — use \`graft ask \"<question>\" --source\`, \`graft grep \"<literal>\"\`, \`graft callers <symbol>\` for ALL code search/understanding. Do NOT use grep/rg for locating or understanding code — only graft.
+
+$PROMPT"
+fi
+
 case "$BACKEND" in
   opencode)
     echo "ERROR: opencode backend disabled (2026-09-15) -- use --backend agy or --backend codex." >&2
