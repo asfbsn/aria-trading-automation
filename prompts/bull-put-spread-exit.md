@@ -66,6 +66,7 @@ connected."
    - Write the payload immediately with the **Write** tool to:
      `$ARIA_HOME/state/scratch/signal_input_<TICKER>_exit.json`
      Merge the price history response directly and unmodified with `"ticker": "<TICKER>"`
+     (this ticker, not a leftover value from a different position's turn)
      and `"short_strike": <float>`.
      `compute_exit_signal.py` accepts `get_price_history`'s native parallel-array shape
      directly — do NOT hand-transform it.
@@ -73,6 +74,13 @@ connected."
      A Bash command whose argument contains JSON (`{`/`"`) gets auto-denied by Claude
      Code's command-safety heuristic as "expansion obfuscation". Writing first with the
      Write tool and passing `--input <path>` is required.
+   - **Before running compute_exit_signal.py, verify the file's own `"ticker"`
+     field matches the filename's ticker.** If it doesn't (seen live in the
+     daily scan, 2026-09-16: a finalist's file ended up containing another
+     ticker's price history) — do NOT patch/relabel the mismatched content
+     in place. Delete the file, re-run `get_price_history` for the correct
+     ticker, and rewrite it fresh. If a clean re-fetch still doesn't produce
+     a real match, treat it as a genuine tool failure, not a silent pass-through.
    - Run: `python3 $ARIA_HOME/scripts/compute_exit_signal.py --input $ARIA_HOME/state/scratch/signal_input_<TICKER>_exit.json --exclude-last-bar` (Bash).
      Settled read only — this report is not intraday-time-sensitive like the entry scan, so no provisional pass is needed.
    - **If the response has `"insufficient_data": true`** (not enough price

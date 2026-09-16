@@ -105,13 +105,24 @@ data-failure), run EXACTLY the per-ticker pipeline:
 2. `get_price_history` (**at least 220 daily bars** — MA150 needs 150+ bars
    warmup, 220 gives margin).
 3. Immediately — same turn, right after seeing that response, while it's
-   still fresh — merge it **directly, unmodified**, with a `"ticker"` key,
+   still fresh — merge it **directly, unmodified**, with a `"ticker"` key
+   set to THIS ticker (not a leftover value from a prior ticker's turn),
    and write it with the **Write** tool to that ticker's OWN file:
    `$ARIA_HOME/state/scratch/signal_input_<TICKER>.json` (e.g.
    `signal_input_AAPL.json`). Do not defer this to a later batch pass —
    writing right after the fetch, one ticker at a time, is what keeps the
    transcription accurate.
-4. Run `python3 $ARIA_HOME/scripts/compute_signal.py --input
+4. **Before running compute_signal.py, verify the file's own `"ticker"`
+   field matches the filename's ticker.** If it doesn't (seen live,
+   2026-09-16: two separate finalists' files ended up containing another
+   ticker's price history instead of their own) — do NOT patch/relabel the
+   mismatched content in place (e.g. editing the ticker field to a
+   made-up value like "TICKER_V2" while leaving the wrong price data
+   underneath). Delete the file, re-run `get_price_history` for the
+   correct ticker, and rewrite it fresh. If a clean re-fetch still doesn't
+   produce a real match, treat it as a genuine `get_price_history` failure
+   (see Failures below), never a silent pass-through.
+   Run `python3 $ARIA_HOME/scripts/compute_signal.py --input
    $ARIA_HOME/state/scratch/signal_input_<TICKER>.json [--exclude-last-bar]`
    (Bash), both SETTLED and PROVISIONAL passes.
 5. Classify (REJECT/RADAR/PRIME) from the real IBKR-derived `entry_confirmed`

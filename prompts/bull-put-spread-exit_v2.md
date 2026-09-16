@@ -136,16 +136,30 @@ under strict crash-insurance rules or relaxed peacetime rules:
        "short_strike": <float>,
        "initial_credit": <float>,
        "entry_date": "<YYYY-MM-DD>",
+       "contracts": <int>,
        "unrealized_pnl": <float or null>,
        "current_mark": <float or null>
      }
      ```
+     `contracts` (absolute quantity of spreads held, from step 1) is required
+     whenever `unrealized_pnl` is non-null: `compute_exit_signal_v2.py`
+     normalizes `unrealized_pnl` (total position dollars from IBKR) by
+     `100 * contracts` before comparing it against the per-share
+     `initial_credit` — omitting it silently defaults to `contracts=1`,
+     which misnormalizes any position sized above 1 contract.
      `compute_exit_signal_v2.py` accepts `get_price_history`'s native parallel-array shape
      directly — do NOT hand-transform it.
      **DO NOT pass the JSON as a heredoc or an `echo ... |` pipe into Bash — ever.**
      A Bash command whose argument contains JSON (`{`/`"`) gets auto-denied by Claude
      Code's command-safety heuristic as "expansion obfuscation". Writing first with the
      Write tool and passing `--input <path>` is required.
+   - **Before running compute_exit_signal_v2.py, verify the file's own `"ticker"`
+     field matches the filename's ticker.** If it doesn't (seen live in the
+     daily scan, 2026-09-16: a finalist's file ended up containing another
+     ticker's price history) — do NOT patch/relabel the mismatched content
+     in place. Delete the file, re-run `get_price_history` for the correct
+     ticker, and rewrite it fresh. If a clean re-fetch still doesn't produce
+     a real match, treat it as a genuine tool failure, not a silent pass-through.
    - Run:
      `python3 $ARIA_HOME/scripts/compute_exit_signal_v2.py --input $ARIA_HOME/state/scratch/signal_input_<TICKER>_exit.json --exclude-last-bar` (Bash).
      Settled read only — this report is not intraday-time-sensitive like the entry scan, so no provisional pass is needed.
