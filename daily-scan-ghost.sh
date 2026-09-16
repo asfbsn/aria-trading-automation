@@ -19,7 +19,8 @@ mcp__claude_ai_Interactive_Brokers_IBKR__search_contracts,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_option_parameters,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_option_data,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_price_snapshot,\
-Bash(python3 ${ARIA_HOME}/scripts/ghost/ghost_fill_logger.py:*)"
+Bash(python3 ${ARIA_HOME}/scripts/ghost/ghost_fill_logger.py:*),\
+Bash(python3 scripts/ghost/ghost_fill_logger.py:*)"
 
 notify() {
   command -v notify-send >/dev/null 2>&1 && notify-send -a "ARIA Ghost System" "$1" "${2:-}" || true
