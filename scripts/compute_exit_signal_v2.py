@@ -440,9 +440,15 @@ def compute_exit_signal_v2(
         # makes the POSITIVE-regime premium stop misfire on essentially
         # every open position regardless of actual health (CodeRabbit
         # finding, 2026-09-15). Normalize down to the same per-share scale.
-        contracts = payload.get("contracts", 1)
+        # A MISSING contracts key is treated the same as an invalid one
+        # (unmeasured, not silently assumed to be 1) -- the prompt is now
+        # required to always supply it alongside unrealized_pnl; a caller
+        # that omits it has a real bug upstream, and defaulting to 1 would
+        # hide that bug by silently misnormalizing any position sized above
+        # 1 contract (CodeRabbit finding, 2026-09-16).
+        contracts = payload.get("contracts")
         try:
-            contracts = float(contracts) if contracts is not None else 1.0
+            contracts = float(contracts) if contracts is not None else None
         except (TypeError, ValueError):
             contracts = None
         if contracts is not None and contracts > 0:
@@ -578,6 +584,8 @@ def run_self_tests() -> None:
       (e) unrealized_pnl (total position dollars) normalizes by both the 100x
           option multiplier and contracts count before comparing against
           per-share initial_credit -- same result at 1 and 5 contracts.
+      (f) unrealized_pnl supplied but contracts missing (not just invalid) is
+          treated as unmeasured, never silently defaulted to contracts=1.
     """
     print("=== [compute_exit_signal_v2] Running Self-Tests ===")
     failures = 0
@@ -802,9 +810,37 @@ def run_self_tests() -> None:
         print(f"[FAIL] (e) Expected contracts-normalized current_loss=2.50, got: {res_e}")
         failures += 1
 
+    # -------------------------------------------------------------------------
+    # Test (f): unrealized_pnl supplied but contracts MISSING (not just invalid)
+    # -- must be treated as unmeasured (premium_stop unevaluated,
+    # premium_stop_unknown=True, thesis_invalidated stays False), never
+    # silently defaulted to contracts=1 (CodeRabbit finding, 2026-09-16).
+    # -------------------------------------------------------------------------
+    payload_f = {
+        "ticker": "TEST_F",
+        "short_strike": short_strike,
+        "initial_credit": initial_credit,
+        "entry_date": "2026-05-01",
+        "unrealized_pnl": -250.0,  # would trigger PREMIUM_MULTIPLE if wrongly defaulted to contracts=1
+        "current_mark": None,
+        "gex_regime": pos_regime_dict,
+        "bars": synthetic_bars,
+    }
+    res_f = compute_exit_signal_v2(payload_f)
+    cond_f = (
+        res_f["premium_stop"]["evaluated"] is False
+        and res_f["checks"]["premium_stop_unknown"] is True
+        and res_f["thesis_invalidated"] is False
+    )
+    if cond_f:
+        print("[PASS] (f) Missing contracts treated as unmeasured, not defaulted to 1")
+    else:
+        print(f"[FAIL] (f) Expected unmeasured premium_stop on missing contracts, got: {res_f}")
+        failures += 1
+
     print("--------------------------------------------------")
     if failures == 0:
-        print("ALL ASSERTIONS PASSED (5/5)")
+        print("ALL ASSERTIONS PASSED (6/6)")
     else:
         print(f"FAILED: {failures} assertion(s) failed.")
         sys.exit(1)
