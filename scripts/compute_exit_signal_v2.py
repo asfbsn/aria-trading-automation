@@ -60,6 +60,20 @@ Input (JSON via stdin or `--input <path>`):
 
 Output (JSON to stdout):
 ------------------------
+When insufficient_data is true (fewer than MIN_BARS price bars), the
+response is a distinct, deliberately minimal shape: ticker, insufficient_data,
+settled, bars_provided, bars_required, regime, regime_detail, stop_mode,
+premium_stop, premium_stop_unknown, profit_target, time_stop, hard_close,
+thesis_invalidated. profit_target/time_stop/premium_stop ARE evaluated even
+here -- none need price bars, only credit/pricing/DTE -- so hard_close can
+still be true for an already-expired or 80%-captured position, and in
+POSITIVE regime thesis_invalidated reflects premium_stop's own triggered
+state (that regime's hard gate needs no bars either). In NEGATIVE regime
+thesis_invalidated stays false (short-strike breach genuinely needs a
+settled close this branch doesn't have -- unmeasured, not verified intact).
+No checks/close/rsi20/ma150/short_strike fields -- callers must not read
+them in this case.
+
 Extends v1 output:
 {
   "ticker": str,
@@ -473,12 +487,42 @@ def compute_exit_signal_v2(
 
     stop_mode = "HARD_STRUCTURAL" if regime == "NEGATIVE" else "PREMIUM_MULTIPLE"
 
+    # Profit-target, time-stop, AND (in POSITIVE regime) premium_stop all
+    # need only credit/pricing/DTE inputs, never price bars -- evaluate them
+    # before the bars check so an insufficient-data position (can't compute
+    # MA150/RSI/candles) still gets a real hard_close/thesis_invalidated read
+    # when it's already expired, hit the 80% profit target, or (POSITIVE
+    # regime only -- premium_stop IS that regime's hard structural gate, no
+    # bars involved) breached the 2.0x-credit mark-to-market loss threshold.
+    # Otherwise those CLOSE triggers were silently dropped just because the
+    # technical side is unmeasured (CodeRabbit finding, 2026-09-16).
+    profit_target, time_stop = evaluate_profit_target_and_time_stop(
+        payload=payload,
+        initial_credit=initial_credit,
+        unrealized_pnl=unrealized_pnl,
+        current_mark=current_mark,
+    )
+    premium_stop = evaluate_premium_stop(
+        initial_credit=initial_credit,
+        unrealized_pnl=unrealized_pnl,
+        current_mark=current_mark,
+    )
+    premium_stop_unknown_insufficient = regime == "POSITIVE" and not premium_stop["evaluated"]
+    thesis_invalidated_insufficient = (
+        regime == "POSITIVE" and premium_stop["evaluated"] and bool(premium_stop["triggered"])
+    )
+
     # 2. Extract and sanitize OHLCV bars
     bars = payload["bars"] if "bars" in payload else bars_from_parallel_arrays(payload)
     if exclude_last_bar and bars:
         bars = bars[:-1]
 
     if len(bars) < MIN_BARS:
+        hard_close_insufficient = (
+            thesis_invalidated_insufficient
+            or bool(profit_target.get("triggered"))
+            or bool(time_stop.get("triggered"))
+        )
         return {
             "ticker": ticker,
             "insufficient_data": True,
@@ -488,7 +532,18 @@ def compute_exit_signal_v2(
             "regime": regime,
             "regime_detail": gex_detail,
             "stop_mode": stop_mode,
-            "thesis_invalidated": False,
+            "premium_stop": premium_stop,
+            "premium_stop_unknown": premium_stop_unknown_insufficient,
+            # thesis_invalidated: in NEGATIVE regime this needs bars (short
+            # strike breach against settled close) and stays False here
+            # (unmeasured, not verified intact). In POSITIVE regime it's
+            # exactly premium_stop's own triggered state -- no bars needed.
+            # hard_close can be True via any of the three bar-independent
+            # triggers evaluated above.
+            "profit_target": profit_target,
+            "time_stop": time_stop,
+            "hard_close": hard_close_insufficient,
+            "thesis_invalidated": thesis_invalidated_insufficient,
         }
 
     closes = [float(b["close"]) for b in bars]
@@ -502,12 +557,7 @@ def compute_exit_signal_v2(
         rsis=rsis,
     )
 
-    # 4. Premium stop evaluation (for POSITIVE regime)
-    premium_stop = evaluate_premium_stop(
-        initial_credit=initial_credit,
-        unrealized_pnl=unrealized_pnl,
-        current_mark=current_mark,
-    )
+    # 4. Premium stop already evaluated above (bar-independent).
 
     # 5. Regime-gated thesis_invalidated decision
     premium_stop_unknown = False
@@ -531,13 +581,7 @@ def compute_exit_signal_v2(
             thesis_invalidated = False
             premium_stop_unknown = True
 
-    # 6. Profit target & Time stop evaluation
-    profit_target, time_stop = evaluate_profit_target_and_time_stop(
-        payload=payload,
-        initial_credit=initial_credit,
-        unrealized_pnl=unrealized_pnl,
-        current_mark=current_mark,
-    )
+    # 6. Profit target & Time stop already evaluated above (bar-independent).
 
     # Augment checks dict with sub-trigger results
     checks["premium_stop_unknown"] = premium_stop_unknown
@@ -586,6 +630,11 @@ def run_self_tests() -> None:
           per-share initial_credit -- same result at 1 and 5 contracts.
       (f) unrealized_pnl supplied but contracts missing (not just invalid) is
           treated as unmeasured, never silently defaulted to contracts=1.
+      (g) insufficient_data still evaluates profit_target/time_stop (bar-
+          independent) and can set hard_close=True.
+      (h) insufficient_data in POSITIVE regime still evaluates premium_stop
+          (also bar-independent, that regime's hard gate) and can set
+          thesis_invalidated=True, not just hard_close.
     """
     print("=== [compute_exit_signal_v2] Running Self-Tests ===")
     failures = 0
@@ -838,9 +887,70 @@ def run_self_tests() -> None:
         print(f"[FAIL] (f) Expected unmeasured premium_stop on missing contracts, got: {res_f}")
         failures += 1
 
+    # -------------------------------------------------------------------------
+    # Test (g): insufficient_data (too few bars) must still evaluate
+    # profit_target/time_stop (bar-independent) and set hard_close=True for
+    # an already-expired position, instead of silently dropping a real CLOSE
+    # trigger just because the technical side is unmeasured (CodeRabbit
+    # finding, 2026-09-16).
+    # -------------------------------------------------------------------------
+    payload_g = {
+        "ticker": "TEST_G",
+        "short_strike": short_strike,
+        "initial_credit": initial_credit,
+        "entry_date": "2026-05-01",
+        "dte": -1,  # already expired -- unconditional time-stop CLOSE
+        "pct_max_profit_captured": -0.10,  # underwater; irrelevant to DTE<0
+        "gex_regime": neg_regime_dict,
+        "bars": synthetic_bars[:50],  # far below MIN_BARS=155
+    }
+    res_g = compute_exit_signal_v2(payload_g)
+    cond_g = (
+        res_g["insufficient_data"] is True
+        and "checks" not in res_g
+        and res_g["time_stop"]["triggered"] is True
+        and res_g["hard_close"] is True
+        and res_g["thesis_invalidated"] is False
+    )
+    if cond_g:
+        print("[PASS] (g) insufficient_data still evaluates bar-independent hard_close triggers")
+    else:
+        print(f"[FAIL] (g) Expected hard_close=True via time_stop despite insufficient_data, got: {res_g}")
+        failures += 1
+
+    # -------------------------------------------------------------------------
+    # Test (h): insufficient_data + POSITIVE regime + premium_stop triggered
+    # (loss > 2x credit) -- premium_stop IS that regime's hard structural
+    # gate and needs no bars either, so thesis_invalidated must be True here
+    # too, not just hard_close (CodeRabbit finding, 2026-09-16).
+    # -------------------------------------------------------------------------
+    payload_h = {
+        "ticker": "TEST_H",
+        "short_strike": short_strike,
+        "initial_credit": initial_credit,
+        "entry_date": "2026-05-01",
+        "contracts": 1,
+        "unrealized_pnl": -250.0,  # -2.50/share > 2.0x credit
+        "current_mark": None,
+        "gex_regime": pos_regime_dict,
+        "bars": synthetic_bars[:50],  # far below MIN_BARS=155
+    }
+    res_h = compute_exit_signal_v2(payload_h)
+    cond_h = (
+        res_h["insufficient_data"] is True
+        and res_h["premium_stop"]["triggered"] is True
+        and res_h["hard_close"] is True
+        and res_h["thesis_invalidated"] is True
+    )
+    if cond_h:
+        print("[PASS] (h) insufficient_data + POSITIVE regime still evaluates premium_stop as the hard gate")
+    else:
+        print(f"[FAIL] (h) Expected thesis_invalidated=True via premium_stop despite insufficient_data, got: {res_h}")
+        failures += 1
+
     print("--------------------------------------------------")
     if failures == 0:
-        print("ALL ASSERTIONS PASSED (6/6)")
+        print("ALL ASSERTIONS PASSED (8/8)")
     else:
         print(f"FAILED: {failures} assertion(s) failed.")
         sys.exit(1)
