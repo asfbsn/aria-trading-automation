@@ -14,6 +14,15 @@ nulls, extra fields, and original formatting. RTH uses the repository's local
 holiday table (unknown years fail closed), standard 09:30–16:00 New York hours,
 and 13:00 closes on July 3, Christmas Eve, and the Friday after Thanksgiving.
 Update the holiday table for exceptional closures and future years.
+
+Quote timestamps: get_price_snapshot's bid_ask field carries no per-quote
+timestamp of its own (confirmed empirically 2026-09-16 -- only `last` does).
+short_quote_ts_utc/long_quote_ts_utc may therefore be the CALLER'S OWN capture
+time (when it received that leg's response), not an exchange-confirmed quote
+timestamp -- quote_ts_is_estimated=true marks this case explicitly. Treat
+quote_skew_seconds and RTH classification accordingly when
+quote_ts_is_estimated is true: they measure time between our two tool calls,
+not genuine exchange-side quote skew.
 """
 
 import argparse
@@ -29,22 +38,30 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[2]
+# 5s was calibrated for genuine simultaneous exchange-side quote timestamps.
+# Capture-time timestamps (see quote_ts_is_estimated) reflect real tool-call
+# latency between the two legs instead -- empirically 8-11s on 2026-09-16's
+# live smoke test -- so 5s rejected almost every real candidate. Widened
+# uniformly (not conditioned on quote_ts_is_estimated) per explicit user
+# decision that date; still bounds inter-leg staleness, just to a looser
+# number reflecting what capture-time timestamps can actually measure.
+QUOTE_SKEW_MAX_SECONDS = 15
 INPUT_FIELDS = '''candidate_id run_id trade_date signal_bar_date mode ticker
 signal_close ma150 vrp_ratio iv_current hv_current iv_as_of_date gex_regime
 gex_percentile gex_data_available gex_as_of derived_short_strike derived_long_strike
 derived_expiry resolved_short_strike resolved_long_strike resolved_expiry
 resolution_status underlying_spot short_bid short_ask short_bid_size short_ask_size
 short_quote_ts_utc long_bid long_ask long_bid_size long_ask_size long_quote_ts_utc
-market_data_type in_rth_claimed code_version_hash git_head git_dirty'''.split()
+quote_ts_is_estimated market_data_type in_rth_claimed code_version_hash git_head git_dirty'''.split()
 ENTRY_FIELDS = '''run_id quote_ts_utc trade_date signal_bar_date mode ticker candidate_id
 in_rth market_data_type signal_close ma150 vrp_ratio iv_current hv_current
 iv_as_of_date gex_regime gex_percentile gex_data_available gex_as_of
 resolved_short_strike resolved_long_strike resolved_expiry resolution_status
 underlying_spot short_bid short_ask short_mid short_bid_size short_ask_size long_bid
 long_ask long_mid long_bid_size long_ask_size short_quote_ts_utc long_quote_ts_utc
-quote_skew_seconds short_spread_abs long_spread_abs credit_mid credit_natural
-displayed_crossing_cost_per_leg spread_width_pct_of_credit liquidity_gate_pass
-code_version_hash git_head git_dirty'''.split()
+quote_ts_is_estimated quote_skew_seconds short_spread_abs long_spread_abs credit_mid
+credit_natural displayed_crossing_cost_per_leg spread_width_pct_of_credit
+liquidity_gate_pass code_version_hash git_head git_dirty'''.split()
 RAW_FIELDS = ['run_id', 'candidate_id', 'attempt_n', 'ts_utc', 'outcome', 'reason'] + [
     key for key in INPUT_FIELDS if key not in ('run_id', 'candidate_id')
 ] + ['in_rth', 'in_rth_claim_agrees', 'quote_skew_seconds', 'input_json']
@@ -96,8 +113,8 @@ def validate(data):
         return values, 'expiry_not_exact'
     if timestamp_error:
         return values, 'missing_or_invalid_quote_timestamp'
-    if values['quote_skew_seconds'] > 5:
-        return values, 'quote_skew_exceeds_5_seconds'
+    if values['quote_skew_seconds'] > QUOTE_SKEW_MAX_SECONDS:
+        return values, f'quote_skew_exceeds_{QUOTE_SKEW_MAX_SECONDS}_seconds'
     # Explicit allowlist, never substring matching ("not live" must fail).
     if str(data.get('market_data_type', '')).strip().lower() not in {'live', 'real-time', 'realtime', 'real_time', '1'}:
         return values, 'market_data_not_live_or_missing'
@@ -135,6 +152,23 @@ def rows(path):
 
 def append(path, fields, row):
     header = not path.exists() or path.stat().st_size == 0
+    if not header:
+        # A field list change (this file changed INPUT_FIELDS/ENTRY_FIELDS
+        # twice in one night, 2026-09-16) silently corrupts every row
+        # appended after the change: csv.DictWriter writes by the CURRENT
+        # fields order, but the file's on-disk header is still the OLD
+        # order, so every reader positionally misreads columns from that
+        # point on with no error anywhere -- caught only by eyeballing a
+        # garbled value (quote_skew_seconds read back as "True"). Fail
+        # loudly instead of writing a row that will read back wrong.
+        with path.open('r', newline='', encoding='utf-8') as existing:
+            existing_header = next(csv.reader(existing), [])
+        if existing_header != fields:
+            raise ValueError(
+                f'{path} header does not match current fields -- would silently '
+                f'misalign every column from here on. Existing: {existing_header}. '
+                f'Current: {fields}. Migrate or archive the old file before writing.'
+            )
     with path.open('a', newline='', encoding='utf-8') as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, extrasaction='ignore')
         if header:
@@ -148,12 +182,21 @@ def log_observation(raw_bytes, state_dir, holiday_text):
         raise ValueError('Input must be one candidate JSON object')
     candidate = data.get('candidate_id', '')
     safe_id = candidate if isinstance(candidate, str) and re.fullmatch(r'[A-Za-z0-9_-]+', candidate) else hashlib.sha256(raw_bytes).hexdigest()
+    # CSV round-trips every value as a string (csv.DictReader never restores
+    # the original JSON type), so comparing a non-string candidate_id (int,
+    # None, ...) against already-written rows never matches -- attempt
+    # always resets to 1 and, for a repeated identical malformed payload,
+    # collides on the SAME archive filename (safe_id_1.json) and crashes on
+    # the exclusive-create open() instead of degrading to a clean rejection.
+    # Compare on a stable string form either way (a no-op for the normal
+    # case where candidate already is one).
+    candidate_key = candidate if isinstance(candidate, str) else str(candidate)
     state_dir.mkdir(parents=True, exist_ok=True)
     with (state_dir / '.logger.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         raw_path = state_dir / 'ghost_observations_raw.csv'
         entry_path = state_dir / 'ghost_entries.csv'
-        previous = [row for row in rows(raw_path) if row['candidate_id'] == candidate]
+        previous = [row for row in rows(raw_path) if row['candidate_id'] == candidate_key]
         attempt = max((int(row['attempt_n']) for row in previous), default=0) + 1
         archive = state_dir / 'raw_responses'
         archive.mkdir(exist_ok=True)
@@ -169,7 +212,7 @@ def log_observation(raw_bytes, state_dir, holiday_text):
             reason = 'missing_or_invalid_candidate_id'
         outcome = 'rejected' if reason else 'accepted'
         if any(row['outcome'] in {'accepted', 'rejected', 'terminal'} for row in previous) or any(
-                row['candidate_id'] == candidate for row in rows(entry_path)):
+                row['candidate_id'] == candidate_key for row in rows(entry_path)):
             outcome, reason = 'duplicate_skipped', 'candidate_already_terminal'
         if outcome == 'accepted':
             append(entry_path, ENTRY_FIELDS, {**data, **values, 'in_rth': rth})
@@ -191,7 +234,8 @@ def self_test():
                 short_bid=2.0, short_ask=2.2, long_bid=0.9, long_ask=1.1,
                 short_bid_size=3, long_bid_size=2, market_data_type='live',
                 short_quote_ts_utc='2026-09-15T14:00:00Z',
-                long_quote_ts_utc='2026-09-15T14:00:02+00:00')
+                long_quote_ts_utc='2026-09-15T14:00:02+00:00',
+                quote_ts_is_estimated=False)
     failures = 0
     with tempfile.TemporaryDirectory(prefix='ghost-self-test-') as temp:
         state = Path(temp)
@@ -206,21 +250,54 @@ def self_test():
                     quote_skew_seconds=2).items():
                 assert math.isclose(float(row[key]), expected, abs_tol=1e-12), key
         def skew():
-            result = record({**base, 'candidate_id': 'skew', 'long_quote_ts_utc': '2026-09-15T14:00:10Z'})
+            # Must exceed QUOTE_SKEW_MAX_SECONDS (15s), not the old 5s bar.
+            result = record({**base, 'candidate_id': 'skew', 'long_quote_ts_utc': '2026-09-15T14:00:20Z'})
             assert result['outcome'] == 'rejected' and 'skew' in result['reason']
+        def skew_within_widened_threshold():
+            # 10s exceeds the OLD 5s bar but must pass under the current 15s
+            # one -- proves the widened threshold actually took effect, not
+            # just that some skew value still rejects.
+            result = record({**base, 'candidate_id': 'skew_ok', 'long_quote_ts_utc': '2026-09-15T14:00:10Z'})
+            assert result['outcome'] == 'accepted'
         def resolution():
             assert record({**base, 'candidate_id': 'resolution', 'resolution_status': 'no_exact_match'})['reason'] == 'resolution_not_exact'
         def duplicate():
             assert record(base)['outcome'] == 'duplicate_skipped'
-            assert len(rows(state / 'ghost_entries.csv')) == 1
+            valid_entries = [r for r in rows(state / 'ghost_entries.csv') if r['candidate_id'] == 'valid']
+            assert len(valid_entries) == 1
             assert (state / 'raw_responses/valid_2.json').read_bytes() == json.dumps(base, indent=2).encode()
         def missing_live():
             payload = {**base, 'candidate_id': 'missing_live'}
             del payload['market_data_type']
             assert record(payload)['reason'] == 'market_data_not_live_or_missing'
-        for label, check in [('valid arithmetic', valid), ('10-second skew', skew),
+        def estimated_timestamp():
+            # quote_ts_is_estimated=True (capture-time fallback, no genuine
+            # connector timestamp) must still accept normally -- the flag is
+            # provenance metadata, not itself a validation gate.
+            result = record({**base, 'candidate_id': 'estimated', 'quote_ts_is_estimated': True})
+            assert result['outcome'] == 'accepted'
+            row = [r for r in rows(state / 'ghost_entries.csv') if r['candidate_id'] == 'estimated'][0]
+            assert row['quote_ts_is_estimated'] == 'True'
+        def repeated_malformed_candidate_id():
+            # A non-string candidate_id (e.g. an upstream bug sending an
+            # int) resubmitted with byte-identical payload must not crash:
+            # safe_id (sha256 fallback) is identical both times, so attempt
+            # must correctly increment to 2 via a type-stable comparison, or
+            # the archive write's exclusive-create collides on the same
+            # filename and raises FileExistsError instead of a clean second
+            # rejection.
+            payload = {**base, 'candidate_id': 12345}
+            first = record(payload)
+            second = record(payload)  # must reach clean duplicate detection, not crash
+            assert first['reason'] == 'missing_or_invalid_candidate_id'
+            assert second['outcome'] == 'duplicate_skipped'
+            assert second['attempt_n'] == first['attempt_n'] + 1
+        for label, check in [('valid arithmetic', valid), ('20-second skew rejected', skew),
+                             ('10-second skew accepted under widened threshold', skew_within_widened_threshold),
                              ('no exact match', resolution), ('idempotency', duplicate),
-                             ('missing market_data_type', missing_live)]:
+                             ('missing market_data_type', missing_live),
+                             ('estimated timestamp still accepts', estimated_timestamp),
+                             ('repeated malformed candidate_id does not crash', repeated_malformed_candidate_id)]:
             try:
                 check()
                 print(f'PASS: {label}')
