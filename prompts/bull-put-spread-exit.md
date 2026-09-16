@@ -63,24 +63,34 @@ connected."
      `get_price_history` will work.
    - Call `get_price_history` using that contract_id (at least 155 daily bars,
      recommend 220 bars for MA150 margin).
-   - Write the payload immediately with the **Write** tool to:
+   - **Before merging or writing anything, sanity-check the response you just
+     got.** `get_price_history`'s raw response carries no ticker field of its
+     own — the `"ticker"` key gets added by you at merge time, so checking it
+     after the fact proves nothing (it will always read back as whatever you
+     just wrote). The only real signal is the price data itself: if more than
+     one position is open this run, compare this response's closing prices
+     against EVERY OTHER position's file you've already written this run so
+     far, not just the most recent one — a duplicate can come from any
+     earlier turn, not only the immediately preceding one. If any of them
+     match (seen live in the daily scan, 2026-09-16: a finalist got a
+     byte-for-byte copy of a different, already-processed ticker's OHLCV
+     series instead of its own), do not merge or write it — retry
+     `get_price_history` once for this ticker. If the retry still returns
+     data matching another ticker's series, or still can't be distinguished,
+     stop and record this as a genuine tool failure — never write it under
+     this ticker's filename regardless of what "ticker" key you'd attach.
+   - Write the payload with the **Write** tool to:
      `$ARIA_HOME/state/scratch/signal_input_<TICKER>_exit.json`
      Merge the price history response directly and unmodified with `"ticker": "<TICKER>"`
-     (this ticker, not a leftover value from a different position's turn)
      and `"short_strike": <float>`.
      `compute_exit_signal.py` accepts `get_price_history`'s native parallel-array shape
      directly — do NOT hand-transform it.
      **DO NOT pass the JSON as a heredoc or an `echo ... |` pipe into Bash — ever.**
      A Bash command whose argument contains JSON (`{`/`"`) gets auto-denied by Claude
      Code's command-safety heuristic as "expansion obfuscation". Writing first with the
-     Write tool and passing `--input <path>` is required.
-   - **Before running compute_exit_signal.py, verify the file's own `"ticker"`
-     field matches the filename's ticker.** If it doesn't (seen live in the
-     daily scan, 2026-09-16: a finalist's file ended up containing another
-     ticker's price history) — do NOT patch/relabel the mismatched content
-     in place. Delete the file, re-run `get_price_history` for the correct
-     ticker, and rewrite it fresh. If a clean re-fetch still doesn't produce
-     a real match, treat it as a genuine tool failure, not a silent pass-through.
+     Write tool and passing `--input <path>` is required. To replace a file's
+     contents, overwrite it with a fresh **Write** call — there is no
+     delete-file tool granted, and none is needed.
    - Run: `python3 $ARIA_HOME/scripts/compute_exit_signal.py --input $ARIA_HOME/state/scratch/signal_input_<TICKER>_exit.json --exclude-last-bar` (Bash).
      Settled read only — this report is not intraday-time-sensitive like the entry scan, so no provisional pass is needed.
    - **If the response has `"insufficient_data": true`** (not enough price
