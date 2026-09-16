@@ -334,6 +334,12 @@ def main():
         parser.error(f"Output already exists; preserve or move it before rerunning: {output}")
     try:
         results = analyze(args)
+        if not results:
+            # Possible if every entry in this dataset is margin-rejected
+            # (see NON_FILL_SIDES/skipped_margin_rejected above) -- results[0]
+            # below would otherwise raise an uncaught IndexError instead of
+            # this file's normal ValueError-based error reporting.
+            raise ValueError("No results to write -- every entry was excluded (e.g. all margin-rejected)")
         with output.open("x", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=list(results[0]))
             writer.writeheader()
