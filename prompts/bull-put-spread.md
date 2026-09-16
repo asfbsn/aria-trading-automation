@@ -104,24 +104,30 @@ data-failure), run EXACTLY the per-ticker pipeline:
 1. `search_contracts` → resolve contract_id.
 2. `get_price_history` (**at least 220 daily bars** — MA150 needs 150+ bars
    warmup, 220 gives margin).
-3. Immediately — same turn, right after seeing that response, while it's
-   still fresh — merge it **directly, unmodified**, with a `"ticker"` key
-   set to THIS ticker (not a leftover value from a prior ticker's turn),
-   and write it with the **Write** tool to that ticker's OWN file:
-   `$ARIA_HOME/state/scratch/signal_input_<TICKER>.json` (e.g.
-   `signal_input_AAPL.json`). Do not defer this to a later batch pass —
+3. **Before merging or writing anything, sanity-check the response you just
+   got.** `get_price_history`'s raw response carries no ticker field of its
+   own — the `"ticker"` key gets added by you at merge time, so checking it
+   after the fact proves nothing (it will always read back as whatever you
+   just wrote). The only real signal is the price data itself: compare this
+   response's closing prices against EVERY OTHER ticker's file you've
+   already written this run so far, not just the most recent one — a
+   duplicate can come from any earlier turn, not only the immediately
+   preceding one. If any of them match (seen live, 2026-09-16: two separate
+   finalists each got a byte-for-byte copy of a different, already-
+   processed ticker's OHLCV series instead of their own), do not merge or
+   write it — retry `get_price_history` once for this ticker. If the retry
+   still returns data matching another ticker's series, or still can't be
+   distinguished, stop here and record this ticker as a genuine
+   `get_price_history` failure (see Failures below) — never write it under
+   this ticker's filename regardless of what "ticker" key you'd attach.
+4. Once the response passes that check, merge it **directly, unmodified**,
+   with a `"ticker"` key set to THIS ticker, and write it with the **Write**
+   tool to that ticker's OWN file: `$ARIA_HOME/state/scratch/signal_input_<TICKER>.json`
+   (e.g. `signal_input_AAPL.json`). Do not defer this to a later batch pass —
    writing right after the fetch, one ticker at a time, is what keeps the
-   transcription accurate.
-4. **Before running compute_signal.py, verify the file's own `"ticker"`
-   field matches the filename's ticker.** If it doesn't (seen live,
-   2026-09-16: two separate finalists' files ended up containing another
-   ticker's price history instead of their own) — do NOT patch/relabel the
-   mismatched content in place (e.g. editing the ticker field to a
-   made-up value like "TICKER_V2" while leaving the wrong price data
-   underneath). Delete the file, re-run `get_price_history` for the
-   correct ticker, and rewrite it fresh. If a clean re-fetch still doesn't
-   produce a real match, treat it as a genuine `get_price_history` failure
-   (see Failures below), never a silent pass-through.
+   transcription accurate. If you ever need to replace a file's contents
+   (e.g. after a caught mismatch elsewhere), overwrite it with a fresh
+   **Write** call — there is no delete-file tool granted, and none is needed.
    Run `python3 $ARIA_HOME/scripts/compute_signal.py --input
    $ARIA_HOME/state/scratch/signal_input_<TICKER>.json [--exclude-last-bar]`
    (Bash), both SETTLED and PROVISIONAL passes.
