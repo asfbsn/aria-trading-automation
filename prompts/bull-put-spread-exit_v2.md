@@ -100,6 +100,7 @@ under strict crash-insurance rules or relaxed peacetime rules:
 
    No open bull-put-spread positions.
 
+   UNPAIRED_LEGS: 0
    POSITIONS_CHECKED: 0
    ```
    and stop. But if there are zero valid spread PAIRS while one or more
@@ -115,8 +116,16 @@ under strict crash-insurance rules or relaxed peacetime rules:
      "no matching offsetting leg", "same underlying/expiry but not both
      puts", "quantities don't offset"]
 
+   UNPAIRED_LEGS: N
    POSITIONS_CHECKED: 0
    ```
+   and stop (empty of valid spreads is not an error, same as GTC guard — the
+   final marker lines are still required so the wrapper recognizes this as a
+   successful run, not a failure).
+   `UNPAIRED_LEGS: N` (here and in the main Output format below) is the count
+   of unpaired/ambiguous option legs, always emitted — 0 when there are none —
+   so the wrapper can detect the marker's absence as a report-parsing gap
+   rather than silently reading "no unpaired legs."
    and stop (empty of valid spreads is not an error, same as GTC guard — the
    final marker line is still required so the wrapper recognizes this as a
    successful run, not a failure).
@@ -127,7 +136,23 @@ under strict crash-insurance rules or relaxed peacetime rules:
      `get_price_history` will work.
    - Call `get_price_history` using that contract_id (at least 155 daily bars,
      recommend 220 bars for MA150 margin).
-   - Write the payload immediately with the **Write** tool to:
+   - **Before merging or writing anything, sanity-check the response you just
+     got.** `get_price_history`'s raw response carries no ticker field of its
+     own — the `"ticker"` key gets added by you at merge time, so checking it
+     after the fact proves nothing (it will always read back as whatever you
+     just wrote). The only real signal is the price data itself: if more than
+     one position is open this run, compare this response's closing prices
+     against EVERY OTHER position's file you've already written this run so
+     far, not just the most recent one — a duplicate can come from any
+     earlier turn, not only the immediately preceding one. If any of them
+     match (seen live in the daily scan, 2026-09-16: a finalist got a
+     byte-for-byte copy of a different, already-processed ticker's OHLCV
+     series instead of its own), do not merge or write it — retry
+     `get_price_history` once for this ticker. If the retry still returns
+     data matching another ticker's series, or still can't be distinguished,
+     stop and record this as a genuine tool failure — never write it under
+     this ticker's filename regardless of what "ticker" key you'd attach.
+   - Write the payload with the **Write** tool to:
      `$ARIA_HOME/state/scratch/signal_input_<TICKER>_exit.json`
      Merge the price history response directly and unmodified with the required v2 keys:
      ```json
@@ -145,21 +170,16 @@ under strict crash-insurance rules or relaxed peacetime rules:
      whenever `unrealized_pnl` is non-null: `compute_exit_signal_v2.py`
      normalizes `unrealized_pnl` (total position dollars from IBKR) by
      `100 * contracts` before comparing it against the per-share
-     `initial_credit` — omitting it silently defaults to `contracts=1`,
-     which misnormalizes any position sized above 1 contract.
+     `initial_credit` — omitting it is treated as unmeasured (routes to
+     `PROFIT_UNKNOWN`/`PREMIUM_STOP_UNKNOWN`), not silently assumed to be 1.
      `compute_exit_signal_v2.py` accepts `get_price_history`'s native parallel-array shape
      directly — do NOT hand-transform it.
      **DO NOT pass the JSON as a heredoc or an `echo ... |` pipe into Bash — ever.**
      A Bash command whose argument contains JSON (`{`/`"`) gets auto-denied by Claude
      Code's command-safety heuristic as "expansion obfuscation". Writing first with the
-     Write tool and passing `--input <path>` is required.
-   - **Before running compute_exit_signal_v2.py, verify the file's own `"ticker"`
-     field matches the filename's ticker.** If it doesn't (seen live in the
-     daily scan, 2026-09-16: a finalist's file ended up containing another
-     ticker's price history) — do NOT patch/relabel the mismatched content
-     in place. Delete the file, re-run `get_price_history` for the correct
-     ticker, and rewrite it fresh. If a clean re-fetch still doesn't produce
-     a real match, treat it as a genuine tool failure, not a silent pass-through.
+     Write tool and passing `--input <path>` is required. To replace a file's
+     contents, overwrite it with a fresh **Write** call — there is no
+     delete-file tool granted, and none is needed.
    - Run:
      `python3 $ARIA_HOME/scripts/compute_exit_signal_v2.py --input $ARIA_HOME/state/scratch/signal_input_<TICKER>_exit.json --exclude-last-bar` (Bash).
      Settled read only — this report is not intraday-time-sensitive like the entry scan, so no provisional pass is needed.
@@ -267,6 +287,9 @@ Bull Put Spread Exit Guard (v2) — <date>
 <N> open position(s) found.
 
 [one line per position, followed by optional PREMARKET NOTE line]
+[if any unpaired/ambiguous legs were found in step 1 alongside valid pairs,
+ list them here in the same format as the zero-pairs case above:
+   [TICKER] [side] [strike] [expiry] qty=[n] — [why it didn't pair]]
 ```
 
 Line format for each position:
@@ -276,7 +299,14 @@ Line format for each position:
 If a premarket note applies (meaningful move vs strike/MA150 or data unavailable), place it on its own line directly after that position's main verdict line, before moving to the next position:
 `  PREMARKET NOTE: [settled close, live price, and movement vs strike/MA150, or "premarket price: unavailable — verify manually"]`
 
-Then, on its own final line, emit exactly:
+Then, on its own two final lines, emit exactly:
+UNPAIRED_LEGS: <N>
 POSITIONS_CHECKED: <N>
+(`UNPAIRED_LEGS` is the count of unpaired/ambiguous legs found in step 1 —
+0 if none — always emitted, even when every leg paired cleanly.)
+
+**`POSITIONS_CHECKED` must be the literal last line of the entire response —
+nothing may follow it, not even a trailing blank line with content after, a
+"trade math for reference" recap, or any other addendum.**
 
 Do not add commentary, recommendations, or risk assessment beyond the verdict, one-line reason, and factual premarket note — this is a factual listing only. The human decides what action to take.
