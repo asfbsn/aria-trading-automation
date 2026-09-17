@@ -147,6 +147,13 @@ CRON_TZ=Asia/Jerusalem
 # Sends a reminder only -- never runs the analysis unattended.
 CRON_TZ=Asia/Jerusalem
 0 9 1 1,4,7,10 * $HOME/Projects/aria-trading/research-reminder.sh >> $HOME/Projects/aria-trading/logs/research-reminder.log 2>&1
+
+# ARIA Ghost System -- dry-run VRP-entry shadow scan (read-only, zero order
+# capability). Staggered 20min after daily-scan.sh's 19:00 slot to avoid
+# both hitting yfinance/IBKR at the same instant.
+CRON_TZ=Asia/Jerusalem
+20 19 * * 1-5 $HOME/Projects/aria-trading/daily-scan-ghost.sh >> $HOME/Projects/aria-trading/logs/cron-ghost.log 2>&1
+50 19 * * 1-5 $HOME/Projects/aria-trading/watchdog-ghost.sh   >> $HOME/Projects/aria-trading/logs/watchdog-ghost.log 2>&1
 CRON
 ) | crontab -
 ```
