@@ -39,12 +39,14 @@ CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-4-8}"
 # (read-only, best-effort; still zero order-placement capability).
 CLAUDE_ALLOWED_TOOLS_BASE="\
 Edit(/${ARIA_HOME}/state/scratch/signal_input_*.json),\
+Edit(/${ARIA_HOME}/state/scratch/exit_guard_positions_*.json),\
 WebSearch,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_account_positions,\
 mcp__claude_ai_Interactive_Brokers_IBKR__search_contracts,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_price_history,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_price_snapshot,\
-Bash(python3 ${ARIA_HOME}/scripts/compute_exit_signal.py:*)"
+Bash(python3 ${ARIA_HOME}/scripts/compute_exit_signal.py:*),\
+Bash(python3 ${ARIA_HOME}/scripts/detect_early_assignment.py:*)"
 CLAUDE_ALLOWED_TOOLS="${CLAUDE_ALLOWED_TOOLS:-$CLAUDE_ALLOWED_TOOLS_BASE}"
 
 # Load user overrides if present. Auth note: see .env's own comment — do NOT
@@ -176,6 +178,21 @@ printf '%s' "$PROMPT" | timeout "${CLAUDE_TIMEOUT:-5m}" "$CLAUDE_BIN" \
 CLAUDE_EC=${PIPESTATUS[1]}
 cat "$RUN_OUTPUT" >>"$LOG_FILE"
 set -e
+
+# Early-assignment alert: fires independently of CLAUDE_EC / POSITIONS_CHECKED
+# validation below -- an assignment line the model already printed is urgent
+# even if the rest of that same run later failed formatting. Separate,
+# immediate send (not folded into the end-of-run digest, which can be
+# truncated at 3800 chars and would bury this). detect_early_assignment.py
+# (called from within the prompt) has no assignment-specific field to key on
+# -- see its own docstring -- this just relays whatever it already decided.
+ASSIGNMENT_LINES="$(awk '/^EARLY_ASSIGNMENT_DETECTED:/' "$RUN_OUTPUT" || true)"
+if [ -n "$ASSIGNMENT_LINES" ]; then
+  send_telegram "$(printf '🚨🚨 EARLY ASSIGNMENT DETECTED — %s 🚨🚨\n\n%s\n\nFull report: %s' "$TODAY" "$ASSIGNMENT_LINES" "$LOG_FILE")" \
+    || echo "[$RUN_TS] TELEGRAM SEND FAILED for early-assignment alert -- check $LOG_FILE manually." >>"$ERR_FILE"
+  notify "ARIA Exit Guard: EARLY ASSIGNMENT DETECTED" "$TODAY — see $LOG_FILE"
+  echo "[$RUN_TS] EARLY ASSIGNMENT DETECTED: $ASSIGNMENT_LINES" >>"$ERR_FILE"
+fi
 
 set +e
 trap - ERR

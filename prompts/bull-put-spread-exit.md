@@ -57,6 +57,25 @@ connected."
    so the wrapper can detect the marker's absence as a report-parsing gap
    rather than silently reading "no unpaired legs."
 
+1.5. **Check for early assignment (deterministic, before any technical analysis):**
+   Using the SAME `get_account_positions` response from step 1 — do not call
+   it again — write the FULL raw response, unmodified, via Write to
+   `$ARIA_HOME/state/scratch/exit_guard_positions_<date>.json`. Immediately
+   run Bash:
+   `python3 $ARIA_HOME/scripts/detect_early_assignment.py --positions $ARIA_HOME/state/scratch/exit_guard_positions_<date>.json`
+   This compares today's positions against the last run's persisted snapshot
+   and updates that snapshot itself — you do not manage that state. If its
+   stdout contains one or more lines starting with `EARLY_ASSIGNMENT_DETECTED:`,
+   copy each such line EXACTLY, unmodified, as the very FIRST line(s) of your
+   final report, before the `Bull Put Spread Exit Guard — <date>` header —
+   this is what triggers the wrapper's separate, immediate high-priority
+   alert. Do not paraphrase, summarize, reword, or omit these lines if
+   present. A vanished short-put leg with no accompanying stock-position
+   increase is NOT flagged by this script (that's an ordinary manual close,
+   not assignment) — it still surfaces normally as an unpaired leg in step 1
+   if it affects pairing. If no `EARLY_ASSIGNMENT_DETECTED:` line appears,
+   proceed normally with no addition to the report.
+
 2. **Compute technical exit signal:** For each open position pair:
    - `search_contracts` (security_type STK) on the underlying symbol → resolve
      `contract_id` (exact symbol match, US primary listing) — required before
@@ -176,6 +195,9 @@ connected."
 
 ## Output
 Keep it short and scannable — this goes straight to Telegram, not a report file.
+If step 1.5 produced any `EARLY_ASSIGNMENT_DETECTED:` line(s), they come
+FIRST, each on its own line, before everything below — the wrapper scans for
+this marker to trigger a separate, immediate high-priority alert.
 Format:
 
 ```
