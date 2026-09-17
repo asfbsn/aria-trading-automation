@@ -98,8 +98,14 @@ class BullPutSpreadSignalEngine:
                 close = closes[i]
 
                 # Rule 2: short strike below MA-150, rounded to nearest $5;
-                # width $10 wide.
-                short_strike = math.floor(ma150 / 5.0) * 5.0
+                # width $10 wide. -0.01 epsilon before flooring: when ma150
+                # lands on an exact $5 multiple, a bare floor(ma150/5)*5
+                # returns ma150 itself, violating "below" MA150 (CodeRabbit
+                # finding, 2026-09-17) -- the fallback branch just below
+                # already used this same epsilon pattern; this was a genuine
+                # oversight in the primary computation, not a deliberate
+                # asymmetry between the two branches.
+                short_strike = math.floor((ma150 - 0.01) / 5.0) * 5.0
                 if short_strike >= close:
                     short_strike = math.floor((min(ma150, close) - 0.01) / 5.0) * 5.0
                 long_strike = short_strike - self.width

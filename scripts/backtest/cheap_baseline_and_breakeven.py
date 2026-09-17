@@ -42,6 +42,13 @@ def main():
         closes_up_to = pdf.loc[pdf.index <= breach_date, "close"]
         volumes_up_to = pdf.loc[pdf.index <= breach_date, "volume"] if "volume" in pdf.columns else None
         ma150_at_breach = pdf.at[breach_date, "ma150"] if "ma150" in pdf.columns else sma(closes_up_to.tolist(), 150)
+        # A column read (pdf.at[...]) can be NaN for the leading bars before
+        # 150 sessions accumulate -- `NaN is not None` is True, so the old
+        # `is not None` check alone let an unmeasured MA150 silently score as
+        # "close is not below it" (NaN comparisons are always False), scoring
+        # ma150_co_breach as a confirmed non-breach instead of unmeasured
+        # (CodeRabbit finding, 2026-09-17).
+        ma150_valid = ma150_at_breach is not None and not pd.isna(ma150_at_breach)
         rsi_at_breach = rsi_series(closes_up_to.tolist())[-1]
         vol_ma20 = sma(volumes_up_to.tolist(), VOLUME_MA_LENGTH) if volumes_up_to is not None else None
         vol_at_breach = volumes_up_to.iloc[-1] if volumes_up_to is not None else None
@@ -51,7 +58,7 @@ def main():
             "pnl_nostop": r_nostop["pnl"],
             "light_volume": (vol_ma20 is not None and vol_at_breach is not None and vol_at_breach < vol_ma20),
             "rsi_at_breach": rsi_at_breach,
-            "ma150_co_breach": (ma150_at_breach is not None and closes_up_to.iloc[-1] < ma150_at_breach),
+            "ma150_co_breach": (ma150_valid and closes_up_to.iloc[-1] < ma150_at_breach),
         })
 
     n = len(events)
