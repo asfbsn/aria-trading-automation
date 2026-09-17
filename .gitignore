@@ -5,6 +5,10 @@
 logs/
 state/
 *.log
+# Research ledger run logs are the audit trail for registered experiments
+# (research/registration_runner.py) -- durable provenance, not regenerable
+# operational noise like the rest of the *.log rule above.
+!research/runs/*.log
 
 # Transient daily priority overlay (date-gated instructor picks)
 priority-today.md
@@ -18,6 +22,7 @@ scripts/backtest/__pycache__/
 scripts/__pycache__/
 scripts/ghost/__pycache__/
 research/__pycache__/
+research/.runs.lock
 
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/

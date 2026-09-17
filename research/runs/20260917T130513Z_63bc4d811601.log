@@ -1,0 +1,83 @@
+INPUT SHA256 IV/HV /home/assaf/Projects/aria-trading/scripts/backtest/run_out_dolthub_iv/volatility_history.pkl: 564a31fc4dca46f8056213f5f80def22f6e90f68e7d77d45120215375a4a0d67
+INPUT SHA256 OHLCV /home/assaf/Projects/aria-trading/scripts/backtest/mega750_ohlcv_cache.pkl: 4e8272ba35cfacdab0c07de63cf971969b6340d05ed118153f726e17282a078b
+Development: fixed explored historical pool; exploratory three-threshold sweep; no Bonferroni correction. Eight series; no interaction claim.
+IS=2023-07-26..2025-01-26; OOS=2025-01-27..2026-07-24; bootstrap seed=20260917, reps=10000, block_days=45
+OPTIONS_CONFIG={'risk_free_rate': 0.045, 'contract_multiplier': 100.0, 'exercise_style': 'american', 'iv_skew': -0.15, 'iv_curvature': 0.05}; one contract/signal; open-only commission=$1.30; hold to expiry; theoretical mid fills; P&L gate uses per-trade mean dollars (total dollars shown informationally only, never gating).
+Universe cache omissions (3): ['NVDA', 'BRKB', 'BFB']
+Universe loaded: 748 of 748 tickers
+Calendar: holiday file authoritative for [2026, 2027]; other years use weekday sessions pooled across the loaded cached universe.
+[vrp_only] entries=8351; candidates skipped for missing/invalid IV/HV=60480
+Undefined z_ma150 (zero/nonfinite stdev): 0; retained in baseline, fails extension filters closed.
+Pooled scored baseline cushion_pct terciles: [0.06810811596743939, 0.14191411644826046]; ties stay together.
+Cushion stratification is a diagnostic, not control or removal of the confound.
+45-day dependence approximation is fixed; borderline CIs remain borderline, with no block-length retuning.
+IS baseline: candidates=3230 n=3230 excluded_oos_cutoff=0 excluded_missing_terminal_price=0 breach_at_expiry=9.32% ever_breached_intraperiod=17.99% total_pnl=$66645.57 mean_pnl=$20.63
+  cushion_pct low: n=971 breach_at_expiry=24.20%
+  cushion_pct middle: n=1117 breach_at_expiry=4.74%
+  cushion_pct high: n=1142 breach_at_expiry=1.14%
+IS gex_only: candidates=3062 n=3062 excluded_oos_cutoff=0 excluded_missing_terminal_price=0 breach_at_expiry=9.57% ever_breached_intraperiod=18.35% total_pnl=$56760.27 mean_pnl=$18.54
+  cushion_pct low: n=925 breach_at_expiry=24.65%
+  cushion_pct middle: n=1047 breach_at_expiry=5.06%
+  cushion_pct high: n=1090 breach_at_expiry=1.10%
+IS z=1.5 extension_only: candidates=2612 n=2612 excluded_oos_cutoff=0 excluded_missing_terminal_price=0 breach_at_expiry=5.63% ever_breached_intraperiod=10.68% total_pnl=$41774.65 mean_pnl=$15.99
+  cushion_pct low: n=451 breach_at_expiry=19.29%
+  cushion_pct middle: n=1043 breach_at_expiry=4.51%
+  cushion_pct high: n=1118 breach_at_expiry=1.16%
+IS z=1.5 combined: candidates=2482 n=2482 excluded_oos_cutoff=0 excluded_missing_terminal_price=0 breach_at_expiry=5.84% ever_breached_intraperiod=11.04% total_pnl=$35096.80 mean_pnl=$14.14
+  cushion_pct low: n=435 breach_at_expiry=19.77%
+  cushion_pct middle: n=980 breach_at_expiry=4.80%
+  cushion_pct high: n=1067 breach_at_expiry=1.12%
+IS z=2.0 extension_only: candidates=2475 n=2475 excluded_oos_cutoff=0 excluded_missing_terminal_price=0 breach_at_expiry=4.93% ever_breached_intraperiod=9.49% total_pnl=$34633.84 mean_pnl=$13.99
+  cushion_pct low: n=353 breach_at_expiry=18.41%
+  cushion_pct middle: n=1015 breach_at_expiry=4.33%
+  cushion_pct high: n=1107 breach_at_expiry=1.17%
+IS z=2.0 combined: candidates=2351 n=2351 excluded_oos_cutoff=0 excluded_missing_terminal_price=0 breach_at_expiry=5.10% ever_breached_intraperiod=9.78% total_pnl=$28772.34 mean_pnl=$12.24
+  cushion_pct low: n=340 breach_at_expiry=18.82%
+  cushion_pct middle: n=954 breach_at_expiry=4.61%
+  cushion_pct high: n=1057 breach_at_expiry=1.14%
+IS z=2.5 extension_only: candidates=2344 n=2344 excluded_oos_cutoff=0 excluded_missing_terminal_price=0 breach_at_expiry=4.27% ever_breached_intraperiod=8.11% total_pnl=$29747.96 mean_pnl=$12.69
+  cushion_pct low: n=274 breach_at_expiry=16.42%
+  cushion_pct middle: n=972 breach_at_expiry=4.32%
+  cushion_pct high: n=1098 breach_at_expiry=1.18%
+IS z=2.5 combined: candidates=2228 n=2228 excluded_oos_cutoff=0 excluded_missing_terminal_price=0 breach_at_expiry=4.40% ever_breached_intraperiod=8.30% total_pnl=$24787.13 mean_pnl=$11.13
+  cushion_pct low: n=265 breach_at_expiry=16.60%
+  cushion_pct middle: n=915 breach_at_expiry=4.59%
+  cushion_pct high: n=1048 breach_at_expiry=1.15%
+OOS baseline: candidates=5121 n=4762 excluded_oos_cutoff=359 excluded_missing_terminal_price=0 breach_at_expiry=13.96% ever_breached_intraperiod=25.18% total_pnl=$65856.30 mean_pnl=$13.83
+  cushion_pct low: n=1693 breach_at_expiry=28.82%
+  cushion_pct middle: n=1547 breach_at_expiry=8.86%
+  cushion_pct high: n=1522 breach_at_expiry=2.63%
+OOS gex_only: candidates=4483 n=4166 excluded_oos_cutoff=317 excluded_missing_terminal_price=0 breach_at_expiry=13.47% ever_breached_intraperiod=24.17% total_pnl=$64963.26 mean_pnl=$15.59
+  cushion_pct low: n=1483 breach_at_expiry=27.92%
+  cushion_pct middle: n=1341 breach_at_expiry=8.65%
+  cushion_pct high: n=1342 breach_at_expiry=2.31%
+OOS z=1.5 extension_only: candidates=3733 n=3471 excluded_oos_cutoff=262 excluded_missing_terminal_price=0 breach_at_expiry=8.73% ever_breached_intraperiod=14.89% total_pnl=$38137.78 mean_pnl=$10.99
+  cushion_pct low: n=647 breach_at_expiry=22.72%
+  cushion_pct middle: n=1350 breach_at_expiry=8.74%
+  cushion_pct high: n=1474 breach_at_expiry=2.58%
+OOS z=1.5 combined: candidates=3268 n=3037 excluded_oos_cutoff=231 excluded_missing_terminal_price=0 breach_at_expiry=8.33% ever_breached_intraperiod=13.99% total_pnl=$38898.72 mean_pnl=$12.81
+  cushion_pct low: n=563 breach_at_expiry=21.85%
+  cushion_pct middle: n=1171 breach_at_expiry=8.54%
+  cushion_pct high: n=1303 breach_at_expiry=2.30%
+OOS z=2.0 extension_only: candidates=3492 n=3254 excluded_oos_cutoff=238 excluded_missing_terminal_price=0 breach_at_expiry=7.71% ever_breached_intraperiod=13.43% total_pnl=$38389.44 mean_pnl=$11.80
+  cushion_pct low: n=501 breach_at_expiry=20.36%
+  cushion_pct middle: n=1288 breach_at_expiry=8.62%
+  cushion_pct high: n=1465 breach_at_expiry=2.59%
+OOS z=2.0 combined: candidates=3060 n=2850 excluded_oos_cutoff=210 excluded_missing_terminal_price=0 breach_at_expiry=7.30% ever_breached_intraperiod=12.46% total_pnl=$39999.01 mean_pnl=$14.03
+  cushion_pct low: n=439 breach_at_expiry=19.36%
+  cushion_pct middle: n=1116 breach_at_expiry=8.33%
+  cushion_pct high: n=1295 breach_at_expiry=2.32%
+OOS z=2.5 extension_only: candidates=3257 n=3035 excluded_oos_cutoff=222 excluded_missing_terminal_price=0 breach_at_expiry=6.82% ever_breached_intraperiod=11.76% total_pnl=$32482.64 mean_pnl=$10.70
+  cushion_pct low: n=368 breach_at_expiry=18.75%
+  cushion_pct middle: n=1223 breach_at_expiry=8.34%
+  cushion_pct high: n=1444 breach_at_expiry=2.49%
+OOS z=2.5 combined: candidates=2867 n=2671 excluded_oos_cutoff=196 excluded_missing_terminal_price=0 breach_at_expiry=6.40% ever_breached_intraperiod=10.82% total_pnl=$37934.15 mean_pnl=$14.20
+  cushion_pct low: n=326 breach_at_expiry=17.18%
+  cushion_pct middle: n=1066 breach_at_expiry=8.07%
+  cushion_pct high: n=1279 breach_at_expiry=2.27%
+z=1.5: FAIL; n_combined=3037; improvement=5.63%; 95% CI=[3.88%, 7.38%]
+z=2.0: PASS; n_combined=2850; improvement=6.67%; 95% CI=[4.63%, 8.85%]
+PASS identifies a promising filter within this fixed historical candidate pool. It does not establish a dealer mechanism, does not validate production exit behavior, and does not authorize deployment.
+z=2.5: PASS; n_combined=2671; improvement=7.56%; 95% CI=[5.35%, 9.77%]
+PASS identifies a promising filter within this fixed historical candidate pool. It does not establish a dealer mechanism, does not validate production exit behavior, and does not authorize deployment.
+Accepted screening candidate: lowest passing z=2.0
