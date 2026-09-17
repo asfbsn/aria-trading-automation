@@ -81,7 +81,16 @@ the shortlist:
   do not classify it locally (no data to classify from). Data-failure tickers
   get a fair independent shot via real IBKR data, preserving the rule that
   prescreen never silently drops a data failure.
-- Else read its `per_ticker[ticker]` entry:
+- Else, before reading anything: **check whether `ticker` is actually a key in
+  `per_ticker`.** A shortlisted ticker can be absent from BOTH `failures` and
+  `per_ticker` — prescreen's own output isn't guaranteed to cover every
+  shortlisted name. If it's missing from `per_ticker` too, do not read
+  `per_ticker[ticker]` (there's nothing there) — this ticker gets NO Phase A
+  classification and counts toward `SIGNALS_FAILED` at the end (see that
+  counter's own definition below: "A shortlisted ticker missing from
+  prescreen's JSON entirely also counts here"), listed in Failures with reason
+  "absent from prescreen output entirely (not in failures, not in per_ticker)".
+  Otherwise, read its `per_ticker[ticker]` entry:
   - If `entry_confirmed: true` → it joins the finalist set (Phase B).
   - If `entry_confirmed: false` → classify NOW, no IBKR needed:
     - **RADAR** if structure is strong per the rule 5 threshold (mirror it

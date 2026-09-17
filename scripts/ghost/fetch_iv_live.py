@@ -15,6 +15,7 @@ import math
 import os
 from pathlib import Path
 import pickle
+import re
 import sys
 from typing import Any, Dict, List
 from zoneinfo import ZoneInfo
@@ -36,12 +37,35 @@ DEFAULT_DAYS_BACK = 10
 DEFAULT_OUT = REPO_ROOT / "state" / "ghost" / "iv_live.pkl"
 
 
-def get_recent_trading_sessions(end_date: datetime.date, n: int) -> List[str]:
-    """Walk backward from (end_date - 1 day) skipping Saturday and Sunday to find n sessions."""
+def load_holidays(path: Path) -> set[str]:
+    """Same us-market-holidays.txt convention and filter as
+    ghost_fill_logger.in_regular_hours() -- one YYYY-MM-DD line per closed
+    session, ignoring comment/blank lines (the file has '# --- 2026 ---'
+    section headers; a naive "any non-empty line" filter treats those as
+    holiday dates too -- caught in testing, not by inspection). Missing file
+    returns an empty set (fails open on skipping, not on running at all --
+    matches this file's existing no-holiday-table behavior when the file
+    doesn't exist)."""
+    if not path.exists():
+        return set()
+    return {line.strip() for line in path.read_text().splitlines()
+            if re.fullmatch(r'\d{4}-\d{2}-\d{2}', line.strip())}
+
+
+def get_recent_trading_sessions(end_date: datetime.date, n: int,
+                                 holidays: set[str] | None = None) -> List[str]:
+    """Walk backward from (end_date - 1 day) skipping weekends and market
+    holidays to find n sessions. Without a holiday set, the day after a
+    market holiday walks straight into it: DoltHub has no row for a holiday,
+    so newest_valid drops to 0 and main() fails closed at the threshold
+    check below -- the ghost IV cache then stays stale after every holiday
+    until someone notices and reruns manually (CodeRabbit finding,
+    2026-09-17)."""
+    holidays = holidays or set()
     sessions: List[str] = []
     cur = end_date - datetime.timedelta(days=1)
     while len(sessions) < n:
-        if cur.weekday() < 5:  # Monday to Friday
+        if cur.weekday() < 5 and cur.isoformat() not in holidays:  # Monday to Friday, not a holiday
             sessions.append(cur.strftime("%Y-%m-%d"))
         cur -= datetime.timedelta(days=1)
     sessions.sort()
@@ -161,7 +185,8 @@ def main() -> None:
     inl = in_list(universe)
 
     today_ny = datetime.datetime.now(ZoneInfo("America/New_York")).date()
-    sessions = get_recent_trading_sessions(today_ny, args.days_back)
+    holidays = load_holidays(REPO_ROOT / "us-market-holidays.txt")
+    sessions = get_recent_trading_sessions(today_ny, args.days_back, holidays)
     print(
         f"fetch_iv_live: universe={len(universe)}, fetching {len(sessions)} sessions [{sessions[0]} .. {sessions[-1]}]"
     )

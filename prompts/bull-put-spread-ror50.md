@@ -103,11 +103,13 @@ Pull the put chain for that expiration with Bid, Ask, Volume, Open Interest, Del
 - **IV percentile above 80** → warning: a fat credit usually comes from an event the market is pricing in. Check earnings, and if you can't identify the reason — write "IV anomaly, reason not identified."
 - These are **warnings, not disqualifications.** Don't disqualify a trade based on IV; present the info and let me decide.
 
-**Step D — Quality filters (a trade failing any of these is disqualified):**
+**Step D — Quality filters (a trade failing any of these is disqualified, EXCEPT the
+earnings check below, which has its own documented rank-lower exception — not a
+silent inconsistency, an explicit one):**
 - Bid > 0 on both legs — without this the Mid isn't reliable
 - **Bid/Ask spread ≤ 10% of Mid on both legs** (or ≤ $0.10 on cheap options). This is the critical filter here: I calculate by Mid, so a wide-spread trade is disqualified even if its ROR looks great
 - Open Interest ≥ 200 on both legs
-- **No earnings before expiration** — if you can't verify the earnings date, mark "unverified" and rank the trade lower
+- **No earnings before expiration** — this disqualifies the trade when a confirmed earnings date falls before expiration. If you can't verify the earnings date at all, this is the one filter here that does NOT disqualify: mark "unverified" and rank the trade lower instead — matching Step C2's "warnings, not disqualifications" treatment of unresolvable IV context, since an unverifiable date is a genuine unknown, not a confirmed problem.
 - Short strike below current price (OTM)
 
 **Step E — ROR filter** per sections 3–4.
