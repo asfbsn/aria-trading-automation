@@ -108,8 +108,13 @@ quote nulls only with verified observations. Unavailable quote fields remain nul
 ## Output
 End with exactly one summary line, nothing else:
 `PROCESSED: <count> MARKED: <count> EXITED: <count>`
-Processed counts every logger call, including duplicate_skipped and rejected. Marked
-and exited count only those exact outcomes in this invocation; duplicates and rejections
-increase neither. If the open positions array was empty, output:
+Processed counts each DISTINCT position from the open-positions array that received at
+least one logger outcome this run — count a candidate once even if a retry needed more
+than one logger call for it, never the raw call count. Marked and exited count only
+positions whose FINAL outcome this run was marked/exited respectively; a candidate whose
+last call was duplicate_skipped or rejected (even after an earlier successful call in
+this same run — which should not happen given the logger's own idempotency, but if it
+does, trust the logger's actual last recorded outcome) does not count toward either. If
+the open positions array was empty, output:
 `PROCESSED: 0 MARKED: 0 EXITED: 0`
 No recommendations or additional commentary after the summary.

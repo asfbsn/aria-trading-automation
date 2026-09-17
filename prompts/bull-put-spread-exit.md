@@ -16,14 +16,37 @@ connected."
 ## What to do
 
 1. **Get open positions:** Call `get_account_positions` (IBKR, read-only).
-   Filter to open short-put-spread legs — a position counts ONLY as a validated
-   leg pair: same underlying, same expiration, both PUTS, offsetting quantities
-   (short leg negative, long leg positive, equal magnitude), and short strike
-   ABOVE long strike. Unpaired or ambiguous option legs are NOT treated as
-   spreads — list them separately as "unpaired legs — verify manually" instead
-   of guessing a pairing.
+
+   **Immediately after that call returns, before any pairing or stop-path
+   logic below — check for early assignment (deterministic, no judgment):**
+   Write the FULL raw response, unmodified, via Write to
+   `$ARIA_HOME/state/scratch/exit_guard_positions_<date>.json`. Immediately
+   run Bash:
+   `python3 $ARIA_HOME/scripts/detect_early_assignment.py --positions $ARIA_HOME/state/scratch/exit_guard_positions_<date>.json`
+   This compares today's positions against the last run's persisted snapshot
+   and updates that snapshot itself — you do not manage that state. If its
+   stdout contains one or more lines starting with `EARLY_ASSIGNMENT_DETECTED:`,
+   hold onto each such line EXACTLY, unmodified — they must appear as the
+   very FIRST line(s) of your final report, before the
+   `Bull Put Spread Exit Guard — <date>` header, in EVERY possible output
+   below, including the zero-pairs stop paths a few lines down. This is what
+   triggers the wrapper's separate, immediate high-priority alert — do not
+   paraphrase, summarize, reword, or omit these lines if present, and do not
+   skip this check just because one of the stop conditions below is about to
+   fire (an assignment can itself be the reason a position disappears from
+   pairing). A vanished short-put leg with no accompanying stock-position
+   increase is NOT flagged by this script (that's an ordinary manual close,
+   not assignment) — it still surfaces normally as an unpaired leg below.
+
+   **Now pair the positions:** Filter to open short-put-spread legs — a
+   position counts ONLY as a validated leg pair: same underlying, same
+   expiration, both PUTS, offsetting quantities (short leg negative, long leg
+   positive, equal magnitude), and short strike ABOVE long strike. Unpaired
+   or ambiguous option legs are NOT treated as spreads — list them separately
+   as "unpaired legs — verify manually" instead of guessing a pairing.
    If the account holds ZERO option legs at all (not just zero valid spread
-   pairs), output:
+   pairs), output (prefixed by any `EARLY_ASSIGNMENT_DETECTED:` lines from
+   above, if present):
    ```
    Bull Put Spread Exit Guard — <date>
    0 open position(s) found.
@@ -35,7 +58,8 @@ connected."
    ```
    and stop. But if there are zero valid spread PAIRS while one or more
    unpaired/ambiguous option legs exist, do NOT use the message above — it
-   would hide a real open position and its risk. Instead output:
+   would hide a real open position and its risk. Instead output (again
+   prefixed by any `EARLY_ASSIGNMENT_DETECTED:` lines, if present):
    ```
    Bull Put Spread Exit Guard — <date>
    0 open position(s) found.
@@ -56,23 +80,6 @@ connected."
    of unpaired/ambiguous option legs, always emitted — 0 when there are none —
    so the wrapper can detect the marker's absence as a report-parsing gap
    rather than silently reading "no unpaired legs."
-
-1.5. **Check for early assignment (deterministic, before any technical analysis):**
-   Using the SAME `get_account_positions` response from step 1 — do not call
-   it again — write the FULL raw response, unmodified, via Write to
-   `$ARIA_HOME/state/scratch/exit_guard_positions_<date>.json`. Immediately
-   run Bash:
-   `python3 $ARIA_HOME/scripts/detect_early_assignment.py --positions $ARIA_HOME/state/scratch/exit_guard_positions_<date>.json`
-   This compares today's positions against the last run's persisted snapshot
-   and updates that snapshot itself — you do not manage that state. If its
-   stdout contains one or more lines starting with `EARLY_ASSIGNMENT_DETECTED:`,
-   copy each such line EXACTLY, unmodified, as the very FIRST line(s) of your
-   final report, before the `Bull Put Spread Exit Guard — <date>` header —
-   this is what triggers the wrapper's separate, immediate high-priority
-   alert. Do not paraphrase, summarize, reword, or omit these lines if
-   present. A vanished short-put leg with no accompanying stock-position
-   increase is NOT flagged by this script (that's an ordinary manual close,
-   not assignment) — it still surfaces normally as an unpaired leg in step 1
    if it affects pairing. If no `EARLY_ASSIGNMENT_DETECTED:` line appears,
    proceed normally with no addition to the report.
 

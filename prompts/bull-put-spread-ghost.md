@@ -128,6 +128,9 @@ nulls only with verified observations. Preserve unavailable prescreen values.
 ## Output
 End with exactly one summary line, nothing else:
 `PROCESSED: <count> ACCEPTED: <count> REJECTED: <count>`
-Processed counts successful logger calls, including duplicate_skipped. Accepted
-and rejected count only those exact outcomes in this invocation; duplicates
-increase neither. No recommendations or additional commentary after the summary.
+Processed counts each DISTINCT candidate from the prescreen output that received at
+least one logger outcome this run — count a candidate once even if a retry needed more
+than one logger call for it, never the raw call count. Accepted and rejected count only
+candidates whose FINAL outcome this run was accepted/rejected respectively; a candidate
+whose last call was duplicate_skipped does not count toward either. No recommendations
+or additional commentary after the summary.

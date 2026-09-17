@@ -171,10 +171,17 @@ missing = expected_ids - observed_ids
 assert not missing, f'Missing observations for candidates: {sorted(missing)}'
 unexpected = observed_ids - expected_ids
 assert not unexpected, f'Unexpected candidate_ids in observations: {sorted(unexpected)}'
-counts = Counter(row['outcome'] for row in observations)
+# Reconcile MARKED/EXITED against the TERMINAL outcome per candidate_id (last
+# row wins), not raw row multiplicity -- a retried candidate legitimately logs
+# more than one raw row (e.g. one rejected attempt then one marked retry), and
+# comparing PROCESSED/MARKED/EXITED against raw-row counts fails a perfectly
+# successful run the moment any retry occurs (same class of bug CodeRabbit
+# flagged in daily-scan-ghost.sh's matching reconciliation, 2026-09-17).
+terminal = {row['candidate_id']: row for row in observations}
+counts = Counter(row['outcome'] for row in terminal.values())
 lines = Path(sys.argv[2]).read_text().strip().splitlines()
 summary = re.fullmatch(r'PROCESSED: (\d+) MARKED: (\d+) EXITED: (\d+)', lines[-1] if lines else '')
-assert summary and tuple(map(int, summary.groups())) == (len(observations), counts['marked'], counts['exited']), 'Missing or incorrect summary'
+assert summary and tuple(map(int, summary.groups())) == (len(terminal), counts['marked'], counts['exited']), 'Missing or incorrect summary'
 PY
 
 notify "ARIA Ghost System (Marks) complete" "$TODAY"

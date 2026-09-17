@@ -178,10 +178,16 @@ missing = expected_ids - observed_ids
 assert not missing, f'Missing observations for candidates: {sorted(missing)}'
 unexpected = observed_ids - expected_ids
 assert not unexpected, f'Unexpected candidate_ids in observations: {sorted(unexpected)}'
-counts = Counter(row['outcome'] for row in observations)
+# Same distinct-candidate reconciliation as the missing/unexpected checks
+# above -- the summary-count assertion below was left on raw row counts when
+# those were fixed, so a retry still failed a perfectly successful run
+# (CodeRabbit finding, 2026-09-17: the 2026-09-15 fix only covered the
+# membership checks, not this line).
+terminal = {row['candidate_id']: row for row in observations}
+counts = Counter(row['outcome'] for row in terminal.values())
 lines = Path(sys.argv[2]).read_text().strip().splitlines()
 summary = re.fullmatch(r'PROCESSED: (\d+) ACCEPTED: (\d+) REJECTED: (\d+)', lines[-1] if lines else '')
-assert summary and tuple(map(int, summary.groups())) == (len(observations), counts['accepted'], counts['rejected']), 'Missing or incorrect summary'
+assert summary and tuple(map(int, summary.groups())) == (len(terminal), counts['accepted'], counts['rejected']), 'Missing or incorrect summary'
 PY
 
 # Distinct post-scan step. Exclusive creation preserves an existing dated copy.
