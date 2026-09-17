@@ -66,8 +66,40 @@ if ! flock -n 9; then
   exit 0
 fi
 
+# Weekend / US market holiday skip -- cron's own "1-5" already excludes
+# weekends, but this stays defense-in-depth (same belt-and-braces reasoning
+# as daily-scan.sh) since a bare python3 invocation or a manual FORCE_RUN=
+# omission shouldn't burn a real IBKR-quote-capture pass against a closed
+# market. Without this, the only thing that skipped a market holiday
+# landing on a weekday was luck (CodeRabbit finding, 2026-09-17).
+HOLIDAYS_FILE="${HOLIDAYS_FILE:-$ARIA_HOME/us-market-holidays.txt}"
+if [ "${FORCE_RUN:-false}" != "true" ]; then
+  DOW="$(TZ=America/New_York date +%u)"
+  if [ "$DOW" -ge 6 ]; then
+    echo "[$RUN_TS] Weekend — US market closed. Skip." >>"$ERR_FILE"
+    exit 0
+  fi
+  if [ -f "$HOLIDAYS_FILE" ] && grep -qx "$TODAY" "$HOLIDAYS_FILE"; then
+    echo "[$RUN_TS] $TODAY is a US market holiday. Skip." >>"$ERR_FILE"
+    notify "ARIA Ghost System skipped" "$TODAY — US market holiday"
+    exit 0
+  fi
+fi
+
 cd "$ARIA_HOME"
 PRESCREEN_FILE="$STATE_DIR/scratch/ghost_prescreen_${TODAY}.json"
+# Generate today's prescreen ourselves -- this wrapper only ever validated an
+# already-existing file, which worked for manual smoke-testing (prescreen run
+# by hand first) but left cron with nothing to validate. ghost_prescreen_v2.py
+# needs pandas/dateutil (the backtest venv), unlike this script's other
+# python3 calls which stay stdlib-only by design (see ghost_fill_logger.py's
+# own docstring on why). Full universe, no --limit -- that flag is a
+# smoke-test-only knob. 10m timeout matches daily-scan.sh's own prescreen
+# guard against a hung yfinance pull.
+timeout 10m "$ARIA_HOME/scripts/backtest/.venv/bin/python3" \
+  "$ARIA_HOME/scripts/ghost/ghost_prescreen_v2.py" --output "$PRESCREEN_FILE" \
+  >>"$ERR_FILE" 2>&1
+echo "[$RUN_TS] Prescreen generated -> $PRESCREEN_FILE" >>"$ERR_FILE"
 # Validate local metadata and capture the raw-row baseline before the scan.
 RUN_ID="$(python3 - "$PRESCREEN_FILE" "$TODAY" <<'PY'
 import json, sys
