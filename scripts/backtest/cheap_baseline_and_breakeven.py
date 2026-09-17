@@ -95,9 +95,12 @@ def main():
     precision_recall(lambda e: e["light_volume"], "Hold if breach on LIGHT volume (below 20d avg)")
     precision_recall(lambda e: not e["ma150_co_breach"], "Hold if MA150 NOT also breached (strike-only breach)")
     rsis = [e["rsi_at_breach"] for e in events if e["rsi_at_breach"] is not None]
-    median_rsi = float(np.median(rsis))
-    precision_recall(lambda e: e["rsi_at_breach"] is not None and e["rsi_at_breach"] > median_rsi,
-                      f"Hold if RSI at breach > median ({median_rsi:.1f})")
+    if rsis:
+        median_rsi = float(np.median(rsis))
+        precision_recall(lambda e: e["rsi_at_breach"] is not None and e["rsi_at_breach"] > median_rsi,
+                          f"Hold if RSI at breach > median ({median_rsi:.1f})")
+    else:
+        print("No RSI values at breach -- RSI heuristic skipped.")
     precision_recall(lambda e: e["light_volume"] and not e["ma150_co_breach"],
                       "Hold if LIGHT volume AND MA150 not co-breached (combined)")
 

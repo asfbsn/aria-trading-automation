@@ -90,6 +90,9 @@ def simulate_heap_allocation(
     """merged: outer-joined per-signal frame with per-width max_loss_W/credit_W/
     spread_pnl_W/exit_date_W columns (W in 10, 5, 2_5, 1), plus code, entry_date.
     """
+    if merged.empty:
+        return AllocatorResult()
+
     heap_total = heap_fraction * net_liq
     per_trade_cap_base = per_trade_fraction * net_liq
     heap_remaining = heap_total
@@ -115,7 +118,7 @@ def simulate_heap_allocation(
 
         for _, row in day_group.sort_values("rr_rank", ascending=rank_ascending).iterrows():
             code = row["code"]
-            sector = (sector_map or {}).get(code, "UNKNOWN")
+            sector = (sector_map or {}).get(code) or f"UNKNOWN:{code}"
 
             if enforce_sector_diversification and sector in open_sectors:
                 result.blocked.append({

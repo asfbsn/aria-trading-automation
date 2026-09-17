@@ -28,6 +28,13 @@ def add_indicators(df):
     df["rsi14"] = 100 - (100 / (1 + rs))
     return df
 
+def _cost_to_close(S, hv, T, k_short, k_long):
+    iv_short = iv_smile_adjustment(S, k_short, hv, IV_SKEW, IV_CURVATURE)
+    iv_long = iv_smile_adjustment(S, k_long, hv, IV_SKEW, IV_CURVATURE)
+    short_p = bs_price(S, k_short, T, RISK_FREE, iv_short, "put")
+    long_p = bs_price(S, k_long, T, RISK_FREE, iv_long, "put")
+    return short_p - long_p
+
 def simulate_one_wave(entry, price_df, variant):
     code = entry["code"]; entry_date = entry["entry_date"]; expiry = entry["expiry"]
     k_short, k_long = entry["short_strike"], entry["long_strike"]
@@ -37,17 +44,13 @@ def simulate_one_wave(entry, price_df, variant):
     dates = price_df.index[(price_df.index > entry_date) & (price_df.index <= expiry)]
     if len(dates) == 0:
         return None
-    for d in dates:
+    for idx, d in enumerate(dates):
         S = price_df.at[d, "close"]; ma150 = price_df.at[d, "ma150"]; hv = price_df.at[d, "hv30"]
         ma20 = price_df.at[d, "ma20"]; rsi14 = price_df.at[d, "rsi14"]
         if pd.isna(S) or pd.isna(hv) or hv <= 0:
             continue
         T = max((expiry - d).days / 365.0, 0.001)
-        iv_short = iv_smile_adjustment(S, k_short, hv, IV_SKEW, IV_CURVATURE)
-        iv_long = iv_smile_adjustment(S, k_long, hv, IV_SKEW, IV_CURVATURE)
-        short_p = bs_price(S, k_short, T, RISK_FREE, iv_short, "put")
-        long_p = bs_price(S, k_long, T, RISK_FREE, iv_long, "put")
-        cost_to_close = short_p - long_p
+        cost_to_close = _cost_to_close(S, hv, T, k_short, k_long)
         captured = (credit - cost_to_close) / credit
         if variant["tp"] and captured >= 0.80:
             return {"exit_date": d, "reason": "TP80", "pnl": (credit - cost_to_close) * 100.0, "days": (d - entry_date).days}
@@ -57,7 +60,18 @@ def simulate_one_wave(entry, price_df, variant):
         ma150_breach = variant["ma150_stop"] and not pd.isna(ma150) and S < ma150
         strike_breach = variant["strike_stop"] and S < k_short
         if ma150_breach or strike_breach:
-            return {"exit_date": d, "reason": "STOP", "pnl": (credit - cost_to_close) * 100.0, "days": (d - entry_date).days}
+            next_idx = idx + 1
+            for d_exit in dates[next_idx:]:
+                S_exit = price_df.at[d_exit, "close"]
+                hv_exit = price_df.at[d_exit, "hv30"]
+                if not pd.isna(S_exit) and not pd.isna(hv_exit) and hv_exit > 0:
+                    T_exit = max((expiry - d_exit).days / 365.0, 0.001)
+                    cost_exit = _cost_to_close(S_exit, hv_exit, T_exit, k_short, k_long)
+                    return {"exit_date": d_exit, "reason": "STOP", "pnl": (credit - cost_exit) * 100.0, "days": (d_exit - entry_date).days}
+            last_date = dates[-1]
+            S_T = price_df.at[last_date, "close"]
+            payoff = credit - max(0.0, k_short - S_T) + max(0.0, k_long - S_T)
+            return {"exit_date": last_date, "reason": "STOP_EXPIRY_FALLBACK", "pnl": payoff * 100.0, "days": (last_date - entry_date).days}
     last_date = dates[-1]; S_T = price_df.at[last_date, "close"]
     payoff = credit - max(0.0, k_short - S_T) + max(0.0, k_long - S_T)
     return {"exit_date": last_date, "reason": "EXPIRY", "pnl": payoff * 100.0, "days": (last_date - entry_date).days}

@@ -60,7 +60,7 @@ def run_allocator(merged, sector_map):
 def main():
     sector_map = load_sector_map()
     all_entries = generate_entries(ENTRY_VARIANTS["B_loose_candle"])
-    is_entries = [e for e in all_entries if e["entry_date"] < OOS_SPLIT]
+    is_entries = [e for e in all_entries if e["expiry"] < OOS_SPLIT]
     oos_entries = [e for e in all_entries if e["entry_date"] >= OOS_SPLIT]
     print(f"Total entries: {len(all_entries)}  IS(<{OOS_SPLIT.date()}): {len(is_entries)}  "
           f"OOS(>={OOS_SPLIT.date()}): {len(oos_entries)}\n")

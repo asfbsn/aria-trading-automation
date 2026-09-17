@@ -52,8 +52,8 @@ def main():
     # finding, 2026-09-15 -- an empty window_starts would otherwise reach the
     # base_rate division below and raise ZeroDivisionError only after load).
     first_idx = CONTEXT_MAX
-    last_idx = n - HORIZON - 1
-    window_starts = list(range(first_idx, last_idx, HORIZON))
+    last_idx_exclusive = n - HORIZON + 1
+    window_starts = list(range(first_idx, last_idx_exclusive, HORIZON))
     print(f"Non-overlapping {HORIZON}-day windows: {len(window_starts)}", flush=True)
     if not window_starts:
         sys.exit(f"Not enough history ({n} bars) for one {HORIZON}-day window "

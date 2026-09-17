@@ -55,8 +55,8 @@ a validated win rate.
 
 ## R&D breakthrough (2026-09-11): VRP entry + GEX-regime exit — NOT wired to production
 
-Sandboxed draft architecture, `_v2` suffix throughout, nothing committed, nothing
-touching the live scanner/exit-guard. Two independent pieces, both verified
+Sandboxed draft architecture, `_v2` suffix throughout, with nothing
+wired into the live scanner or exit guard. Two independent pieces, both verified
 against real (non-synthetic) data this session:
 
 - **`bps_signal_engine_v2.py`** — replaces the RSI/near-MA150-band entry gate
