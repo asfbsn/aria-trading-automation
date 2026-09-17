@@ -87,6 +87,20 @@ if [ "${FORCE_RUN:-false}" != "true" ]; then
 fi
 
 cd "$ARIA_HOME"
+# Refresh the live IV/HV cache before prescreen runs. Never wired in before
+# 2026-09-17: iv_live.pkl was fetched once, manually, on 2026-09-16 and never
+# refreshed, so every session after that had zero same-day IV coverage --
+# ghost_prescreen_v2.py's exact-date-only IV lookup silently produced zero
+# candidates every run (no exception, no reconciliation failure, since zero
+# candidates matches zero observations) until this was noticed on the
+# 2026-09-17 19:20 run. fetch_iv_live.py already fails loudly (exit 1) if
+# the newest session's valid-symbol coverage drops below 50% of the universe,
+# so a real DoltHub problem here aborts the whole scan via the existing ERR
+# trap rather than silently reproducing the same stale-cache failure.
+timeout 3m "$ARIA_HOME/scripts/backtest/.venv/bin/python3" \
+  "$ARIA_HOME/scripts/ghost/fetch_iv_live.py" --out "$STATE_DIR/ghost/iv_live.pkl" \
+  >>"$ERR_FILE" 2>&1
+echo "[$RUN_TS] IV cache refreshed -> $STATE_DIR/ghost/iv_live.pkl" >>"$ERR_FILE"
 PRESCREEN_FILE="$STATE_DIR/scratch/ghost_prescreen_${TODAY}.json"
 # Generate today's prescreen ourselves -- this wrapper only ever validated an
 # already-existing file, which worked for manual smoke-testing (prescreen run
