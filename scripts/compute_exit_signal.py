@@ -47,7 +47,11 @@ def main():
     exclude_last_bar = "--exclude-last-bar" in args
 
     if "--input" in args:
-        input_path = args[args.index("--input") + 1]
+        idx = args.index("--input")
+        if idx + 1 >= len(args):
+            sys.stderr.write("Error: --input requires a path argument\n")
+            sys.exit(2)
+        input_path = args[idx + 1]
         with open(input_path) as f:
             payload = json.load(f)
     else:

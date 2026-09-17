@@ -1,9 +1,12 @@
 # ARIA — Daily Bull Put Spread Scanner
 
-Automated, unattended scanner that evaluates a static large/mid-cap US universe
-every trading day and delivers a two-table Bull Put Spread report (desktop
-notification + Telegram), via a headless Claude process — no TradingView
-dependency in the automated path. Two-phase signal source: the bulk of the
+Scanner that evaluates a static large/mid-cap US universe every trading day
+and delivers a two-table Bull Put Spread report (desktop notification +
+Telegram), via a headless Claude process — no TradingView dependency in the
+automated path. **Intended to run unattended via cron; currently does not**
+(see "Known open issue" under Operational notes below — headless cron runs
+don't see the IBKR connector, so scans are run from an interactive session
+via `FORCE_RUN=true` until that's root-caused). Two-phase signal source: the bulk of the
 universe is classified locally from yfinance data (Phase A); **IBKR** is the
 sole authoritative source for the finalist set — every name that can reach a
 PRIME classification or a trade directive is IBKR-verified (Phase B), and all

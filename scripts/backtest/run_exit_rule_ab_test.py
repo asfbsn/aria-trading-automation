@@ -1,6 +1,6 @@
-"""A/B test: does the live exit-guard's hard stop-loss (settled-close MA150
-breach OR short-strike breach) help or hurt a small account, versus the
-backtest's existing hold-to-expiry-only assumption?
+"""A/B test: does adding a settled-close hard stop (MA150 breach and/or
+short-strike breach) help or hurt a small account, versus the backtest's
+existing hold-to-expiry-only assumption?
 
 Reuses the entries already opened in the 7-of-7, $10-wide "current" tier
 (run_out_full_universe/current for the 750-ticker universe, run_out/current
@@ -10,12 +10,20 @@ and re-simulates each one day-by-day against four exit-rule variants:
   0. Baseline (already known from the original backtest run): hold to expiry,
      no TP, no stop. Not re-simulated here, just quoted for context.
   1. TP-only:        80% profit-take, no stop-loss at all (ride out any breach).
-  2. TP + full stop: 80% profit-take + MA150 breach + short-strike breach
-                      (the live exit-guard's actual rule, minus the time-stop
-                      -- the user's variant spec didn't include DTE<=7, so it's
+  2. TP + full stop: 80% profit-take + MA150 breach + short-strike breach --
+                      HISTORICAL/EXPERIMENTAL, not the live rule (MA150 is
+                      advisory-only live, surfaces as RECOMMEND EXIT, never
+                      an automatic CLOSE -- see README.md's exit-guard
+                      section; this variant tests the stricter hypothetical
+                      of also hard-stopping on it, minus the time-stop -- the
+                      user's variant spec didn't include DTE<=7, so it's
                       excluded here to test exactly what was asked).
-  2a. TP + MA150-only stop   (isolates the MA150 leg)
-  2b. TP + strike-only stop  (isolates the short-strike-breach leg)
+  2a. TP + MA150-only stop   (isolates the MA150 leg -- also experimental,
+                      same reason as 2 above)
+  2b. TP + strike-only stop  (isolates the short-strike-breach leg -- this
+                      is the one that matches the live exit-guard's actual
+                      automatic-CLOSE rule, TP + strike breach + time-stop,
+                      minus the time-stop excluded here per the note above)
 
 All four use settled (prior) daily close only -- same cadence as
 bull-put-spread-exit.md -- never intraday. Daily marks use the same BS +

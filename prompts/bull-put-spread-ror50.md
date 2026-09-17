@@ -148,7 +148,7 @@ Start with one line: which stocks you checked, date and time of the quotes, whet
 Below the table, for each stock that meets the target, 2–3 lines:
 - **Target fit:** the resulting ROR, and how many cents of credit separate it from 50% (above or below)
 - **Specific risks:** liquidity/spread, earnings, ex-dividend before expiration (early-assignment risk on the short leg), double exposure to an asset already in my portfolio
-- **Exit order:** closing price at Take Profit of 50% of the credit = `credit / 2`, and the planned Stop
+- **Exit order:** GTC buy-to-close at 20% of the received credit = `credit × 0.20` (captures 80% of max profit — matches the live exit-guard's mandatory CLOSE trigger and the main strategy's default GTC target; do not suggest a different capture percentage here, this tool feeds the same live account/workflow), and the planned Stop
 
 End with a summary line: total risk if I enter every trade meeting the target, and what percent of NLV that is.
 

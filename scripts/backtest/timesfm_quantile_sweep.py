@@ -99,6 +99,16 @@ def main():
     print(f"\nBase rate: {base_rate:.1%} ({n_recover}/{len(events)})")
 
     print("\n=== Threshold sweep (score = fraction of 9 quantile bands above strike) ===")
+    # The kill criterion is precision AT SIMILAR RECALL to the cheap RSI-
+    # median heuristic (50.4%) -- picking whichever threshold has the
+    # highest precision among ALL thresholds with n_hold>=20 lets a
+    # low-recall, small-sample outlier threshold "win" the sweep and then
+    # get compared against the heuristic's 56.2%/50.4% baseline as if it
+    # were the same operating point, when it isn't (CodeRabbit finding,
+    # 2026-09-17). Constrain selection to thresholds within a tolerance band
+    # around the heuristic's recall before ranking by precision.
+    target_recall = 0.504
+    recall_tolerance = 0.05
     best = None
     for t in [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]:
         preds = [e["prob_recover_score"] >= t for e in events]
@@ -108,16 +118,20 @@ def main():
         n_hold = tp + fp
         prec = tp / n_hold if n_hold else float("nan")
         rec = tp / (tp + fn) if (tp + fn) else float("nan")
-        print(f"threshold={t:.1f}: n_hold={n_hold:4d}  precision={prec:.1%}  recall={rec:.1%}")
-        if n_hold >= 20 and (best is None or prec > best[1]):
+        in_recall_band = not np.isnan(rec) and abs(rec - target_recall) <= recall_tolerance
+        print(f"threshold={t:.1f}: n_hold={n_hold:4d}  precision={prec:.1%}  recall={rec:.1%}"
+              f"{'  [in recall band]' if in_recall_band else ''}")
+        if n_hold >= 20 and in_recall_band and (best is None or prec > best[1]):
             best = (t, prec, rec, n_hold)
 
     if best is None:
-        print("\nNo threshold reached n_hold>=20; sweep inconclusive.")
+        print(f"\nNo threshold reached n_hold>=20 within recall {recall_tolerance:.0%} of "
+              f"the heuristic's {target_recall:.1%} target; sweep inconclusive -- not "
+              f"comparable to the cheap heuristic at a similar operating point.")
         return
 
-    print(f"\nBest threshold (n_hold>=20): t={best[0]}, precision={best[1]:.1%}, "
-          f"recall={best[2]:.1%}, n_hold={best[3]}")
+    print(f"\nBest threshold (n_hold>=20, recall within {recall_tolerance:.0%} of target): "
+          f"t={best[0]}, precision={best[1]:.1%}, recall={best[2]:.1%}, n_hold={best[3]}")
     cheap_best_precision = 0.562
     delta = best[1] - cheap_best_precision
     print(f"\nCheap RSI-median heuristic precision: 56.2% (recall 50.4%)")
