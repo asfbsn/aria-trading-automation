@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 import io
 import os
 from pathlib import Path
+import shlex
 import signal
 import subprocess
 import sys
@@ -193,7 +194,7 @@ class RegistrationRunner:
             "event_type": "registered",
             "ts_utc": now_utc,
             "proposal_path": str(self.proposal_path),
-            "command": " ".join(self.command),
+            "command": shlex.join(self.command),
             "exit_code": "",
             "duration_seconds": "",
             "log_path": str(self.log_path),
@@ -219,7 +220,7 @@ class RegistrationRunner:
             "event_type": event_type,
             "ts_utc": now_utc,
             "proposal_path": str(self.proposal_path),
-            "command": " ".join(self.command),
+            "command": shlex.join(self.command),
             "exit_code": str(exit_code) if exit_code != "" else "",
             "duration_seconds": f"{elapsed:.4f}",
             "log_path": str(self.log_path),

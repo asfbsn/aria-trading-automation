@@ -121,7 +121,22 @@ def run(positions_path, baseline_path):
     fresh = load_positions(positions_path)
     baseline = load_baseline(baseline_path)
     alerts = detect(fresh, baseline)
-    save_baseline(baseline_path, fresh)
+    # An empty fresh payload (IBKR outage, auth hiccup, a malformed capture)
+    # would otherwise overwrite the baseline with [] unconditionally --
+    # detect() correctly finds nothing to alert on (no short put vanished
+    # relative to an empty comparison), but a REAL assignment happening
+    # between this run and the next would then be compared against that
+    # now-empty baseline and never caught either, since there'd be no prior
+    # short put on record to notice vanishing. Defeats the script's one job
+    # (CodeRabbit finding, 2026-09-17). Keep the previous baseline whenever
+    # fresh is empty and there was a real baseline to lose; an empty fresh
+    # payload against an already-empty baseline is a genuine no-op, not a
+    # loss.
+    if fresh or not baseline:
+        save_baseline(baseline_path, fresh)
+    else:
+        print('WARN: empty positions payload -- keeping previous baseline, not overwriting it',
+              file=sys.stderr)
     return alerts
 
 
@@ -218,12 +233,38 @@ def self_test():
             run(pos_path, base)
             assert json.loads(base.read_text())['positions'] == second
 
+    def empty_fresh_payload_preserves_baseline():
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp) / 'baseline.json'
+            pos_path = Path(temp) / 'positions.json'
+            real_baseline = [short_put(1, -1), long_put(2, 1)]
+            base.write_text(json.dumps({'positions': real_baseline}))
+            pos_path.write_text(json.dumps({'positions': []}))  # e.g. an IBKR outage
+            alerts = run(pos_path, base)
+            assert alerts == [], alerts  # nothing to compare against an empty fetch
+            assert json.loads(base.read_text())['positions'] == real_baseline, (
+                'baseline must survive an empty fresh payload -- otherwise a real '
+                'assignment before the NEXT run would be invisible (no prior short '
+                'put on record to notice vanishing)'
+            )
+
+    def empty_fresh_against_empty_baseline_is_a_real_noop():
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp) / 'baseline.json'
+            pos_path = Path(temp) / 'positions.json'
+            pos_path.write_text(json.dumps({'positions': []}))
+            alerts = run(pos_path, base)
+            assert alerts == []
+            assert json.loads(base.read_text())['positions'] == []
+
     check('first run with no baseline seeds it, no alert', first_run_no_baseline)
     check('vanished short put + new stock triggers assignment alert', assignment_detected)
     check('vanished short put with no stock change is not flagged', manual_close_not_flagged)
     check('unchanged positions produce no alert', no_change_no_alert)
     check('zeroed (not absent) short put still detected', zeroed_not_absent_still_detected)
     check('baseline file updates on every run', baseline_updates_every_run)
+    check('empty fresh payload preserves the previous baseline', empty_fresh_payload_preserves_baseline)
+    check('empty fresh against an already-empty baseline is a real no-op', empty_fresh_against_empty_baseline_is_a_real_noop)
 
     return failures
 
