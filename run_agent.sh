@@ -194,8 +194,18 @@ case "$BACKEND" in
     trap 'restore_model; exit 143' TERM
     trap 'restore_model; exit 129' HUP
 
-    jq --arg m "$MODEL" '.model = $m' "$AGY_SETTINGS" > "$AGY_SETTINGS.tmp" \
-      && mv "$AGY_SETTINGS.tmp" "$AGY_SETTINGS"
+    # Without set -e (this script uses -uo pipefail only), a failed jq or mv
+    # here would otherwise just fall through to the agy call below with the
+    # requested model never actually swapped in -- silently running on
+    # whatever model settings.json already had (CodeRabbit finding,
+    # 2026-09-17). restore_model is already trapped above, so exiting here
+    # still restores the original value.
+    if ! jq --arg m "$MODEL" '.model = $m' "$AGY_SETTINGS" > "$AGY_SETTINGS.tmp" \
+      || ! mv "$AGY_SETTINGS.tmp" "$AGY_SETTINGS"; then
+      rm -f "$AGY_SETTINGS.tmp"
+      echo "ERROR: failed to select agy model '$MODEL' in $AGY_SETTINGS." >&2
+      exit 3
+    fi
 
     # NOTE: agy's flag parser is order-sensitive — any flag placed *after* --print
     # gets mis-swallowed (observed: --dangerously-skip-permissions after --print
