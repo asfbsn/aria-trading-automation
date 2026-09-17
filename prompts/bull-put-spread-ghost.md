@@ -53,9 +53,13 @@ Copy mode and signal_bar_date from the prescreen envelope when absent on an item
    `last` does, confirmed empirically 2026-09-16) — for that case, and only
    that case, record your own current wall-clock time (timezone-aware
    ISO8601 UTC), taken immediately after receiving that leg's response, and
-   set `quote_ts_is_estimated: true`. If a genuine connector timestamp ever
-   is available, use it and set `quote_ts_is_estimated: false`. Never reuse a
-   timestamp across legs either way. Copy bid/ask sizes, not open interest,
+   set that leg's own `short_quote_ts_is_estimated`/`long_quote_ts_is_estimated`
+   to `true`. If a genuine connector timestamp ever is available for a leg,
+   use it and set that SAME leg's flag to `false` — these are per-leg,
+   independent of each other: one leg can carry a genuine connector
+   timestamp while the other falls back to capture time, and each flag must
+   reflect only its own leg, never copied from or matched to the other leg's
+   value. Never reuse a timestamp across legs either way. Copy bid/ask sizes, not open interest,
    into size fields. Missing sizes stay null. Preserve raw bid/ask numbers
    even if crossed, zero, or negative.
    Set `market_data_type` from each leg's own `top_status` value (REALTIME,
@@ -113,7 +117,8 @@ Copy mode and signal_bar_date from the prescreen envelope when absent on an item
   "long_bid_size": null,
   "long_ask_size": null,
   "long_quote_ts_utc": null,
-  "quote_ts_is_estimated": false,
+  "short_quote_ts_is_estimated": false,
+  "long_quote_ts_is_estimated": false,
   "market_data_type": null,
   "in_rth_claimed": null,
   "code_version_hash": "<CODE_VERSION_HASH>",

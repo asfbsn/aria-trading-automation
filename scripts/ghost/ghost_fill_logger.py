@@ -19,10 +19,13 @@ Quote timestamps: get_price_snapshot's bid_ask field carries no per-quote
 timestamp of its own (confirmed empirically 2026-09-16 -- only `last` does).
 short_quote_ts_utc/long_quote_ts_utc may therefore be the CALLER'S OWN capture
 time (when it received that leg's response), not an exchange-confirmed quote
-timestamp -- quote_ts_is_estimated=true marks this case explicitly. Treat
-quote_skew_seconds and RTH classification accordingly when
-quote_ts_is_estimated is true: they measure time between our two tool calls,
-not genuine exchange-side quote skew.
+timestamp -- short_quote_ts_is_estimated / long_quote_ts_is_estimated mark
+this case explicitly, PER LEG (one leg can carry a genuine connector
+timestamp while the other falls back to capture time -- a single shared flag
+couldn't represent that, CodeRabbit finding 2026-09-17). Treat
+quote_skew_seconds and RTH classification accordingly when either flag is
+true: they measure time between our two tool calls for that leg, not
+genuine exchange-side quote skew.
 """
 
 import argparse
@@ -52,14 +55,16 @@ gex_percentile gex_data_available gex_as_of derived_short_strike derived_long_st
 derived_expiry resolved_short_strike resolved_long_strike resolved_expiry
 resolution_status underlying_spot short_bid short_ask short_bid_size short_ask_size
 short_quote_ts_utc long_bid long_ask long_bid_size long_ask_size long_quote_ts_utc
-quote_ts_is_estimated market_data_type in_rth_claimed code_version_hash git_head git_dirty'''.split()
+short_quote_ts_is_estimated long_quote_ts_is_estimated market_data_type in_rth_claimed
+code_version_hash git_head git_dirty'''.split()
 ENTRY_FIELDS = '''run_id quote_ts_utc trade_date signal_bar_date mode ticker candidate_id
 in_rth market_data_type signal_close ma150 vrp_ratio iv_current hv_current
 iv_as_of_date gex_regime gex_percentile gex_data_available gex_as_of
 resolved_short_strike resolved_long_strike resolved_expiry resolution_status
 underlying_spot short_bid short_ask short_mid short_bid_size short_ask_size long_bid
 long_ask long_mid long_bid_size long_ask_size short_quote_ts_utc long_quote_ts_utc
-quote_ts_is_estimated quote_skew_seconds short_spread_abs long_spread_abs credit_mid
+short_quote_ts_is_estimated long_quote_ts_is_estimated quote_skew_seconds
+short_spread_abs long_spread_abs credit_mid
 credit_natural displayed_crossing_cost_per_leg spread_width_pct_of_credit
 liquidity_gate_pass code_version_hash git_head git_dirty'''.split()
 RAW_FIELDS = ['run_id', 'candidate_id', 'attempt_n', 'ts_utc', 'outcome', 'reason'] + [
@@ -235,7 +240,7 @@ def self_test():
                 short_bid_size=3, long_bid_size=2, market_data_type='live',
                 short_quote_ts_utc='2026-09-15T14:00:00Z',
                 long_quote_ts_utc='2026-09-15T14:00:02+00:00',
-                quote_ts_is_estimated=False)
+                short_quote_ts_is_estimated=False, long_quote_ts_is_estimated=False)
     failures = 0
     with tempfile.TemporaryDirectory(prefix='ghost-self-test-') as temp:
         state = Path(temp)
@@ -271,13 +276,20 @@ def self_test():
             del payload['market_data_type']
             assert record(payload)['reason'] == 'market_data_not_live_or_missing'
         def estimated_timestamp():
-            # quote_ts_is_estimated=True (capture-time fallback, no genuine
-            # connector timestamp) must still accept normally -- the flag is
-            # provenance metadata, not itself a validation gate.
-            result = record({**base, 'candidate_id': 'estimated', 'quote_ts_is_estimated': True})
+            # short/long_quote_ts_is_estimated=True (capture-time fallback,
+            # no genuine connector timestamp) must still accept normally --
+            # the flags are provenance metadata, not a validation gate. Per-
+            # leg, not a single shared flag: one leg can have a genuine
+            # connector timestamp while the other falls back to capture time
+            # (CodeRabbit finding, 2026-09-17) -- test asymmetric legs, not
+            # just both-True, to prove they're actually independent.
+            result = record({**base, 'candidate_id': 'estimated',
+                              'short_quote_ts_is_estimated': True,
+                              'long_quote_ts_is_estimated': False})
             assert result['outcome'] == 'accepted'
             row = [r for r in rows(state / 'ghost_entries.csv') if r['candidate_id'] == 'estimated'][0]
-            assert row['quote_ts_is_estimated'] == 'True'
+            assert row['short_quote_ts_is_estimated'] == 'True'
+            assert row['long_quote_ts_is_estimated'] == 'False'
         def repeated_malformed_candidate_id():
             # A non-string candidate_id (e.g. an upstream bug sending an
             # int) resubmitted with byte-identical payload must not crash:
