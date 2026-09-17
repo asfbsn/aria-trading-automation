@@ -67,28 +67,72 @@ def stock_quantity(positions, symbol):
 
 
 def detect(fresh_positions, baseline_positions):
-    """Returns a list of EARLY_ASSIGNMENT_DETECTED marker strings (possibly empty)."""
+    """Returns a list of EARLY_ASSIGNMENT_DETECTED marker strings (possibly empty).
+
+    Aggregated PER SYMBOL, not per contract_id: multiple short puts on the
+    same underlying share one stock-position delta. Evaluating each
+    contract_id independently against the FULL stock increase let one real
+    assignment justify an alert for every OTHER short put that merely closed
+    manually on the same symbol -- double/triple-counted from a single
+    100-share move (CodeRabbit finding, 2026-09-17). Also now catches
+    PARTIAL assignment (e.g. -2 contracts -> -1): comparing only "did the
+    contract vanish entirely" missed a still-present, partially-reduced
+    position completely (same finding) -- this compares baseline vs fresh
+    QUANTITY per contract, not just presence/absence.
+
+    Exact per-contract attribution (which specific short put, at which
+    strike, was the one actually assigned) is NOT determinable from account
+    position deltas alone when multiple legs changed in the same window --
+    this reports how many contracts on the symbol are LIKELY assigned
+    (bounded by both the quantity that disappeared and the shares that
+    appeared) and lists every contract that changed, for a human to
+    reconcile against IBKR's actual assignment notice.
+    """
     fresh_by_id = {p['contract_id']: p for p in fresh_positions if 'contract_id' in p}
-    alerts = []
-    for baseline_position in baseline_positions:
-        if not is_short_put(baseline_position):
+    baseline_shorts_by_symbol = {}
+    for position in baseline_positions:
+        if not is_short_put(position):
             continue
-        contract_id = baseline_position.get('contract_id')
-        fresh_match = fresh_by_id.get(contract_id)
-        still_open = fresh_match is not None and fresh_match.get('position', 0) != 0
-        if still_open:
-            continue
-        symbol = symbol_of(baseline_position)
+        symbol = symbol_of(position)
         if not symbol:
+            continue
+        baseline_shorts_by_symbol.setdefault(symbol, []).append(position)
+
+    alerts = []
+    for symbol, shorts in baseline_shorts_by_symbol.items():
+        removed_qty = 0.0
+        changed = []
+        for position in shorts:
+            contract_id = position.get('contract_id')
+            baseline_qty = abs(position.get('position', 0))
+            fresh_match = fresh_by_id.get(contract_id)
+            fresh_qty = abs(fresh_match.get('position', 0)) if fresh_match is not None else 0.0
+            this_removed = max(0.0, baseline_qty - fresh_qty)
+            if this_removed > 0:
+                removed_qty += this_removed
+                changed.append((contract_id, position.get('position'), fresh_qty))
+        if removed_qty <= 0:
             continue
         old_stock_qty = stock_quantity(baseline_positions, symbol)
         new_stock_qty = stock_quantity(fresh_positions, symbol)
-        if new_stock_qty > old_stock_qty:
-            alerts.append(
-                f"EARLY_ASSIGNMENT_DETECTED: {symbol} short put "
-                f"(contract_id={contract_id}, was position={baseline_position.get('position')}) "
-                f"vanished; STK position changed from {old_stock_qty:g} to {new_stock_qty:g} shares."
-            )
+        stock_increase = max(0.0, new_stock_qty - old_stock_qty)
+        if stock_increase <= 0:
+            continue
+        likely_assigned = min(removed_qty, stock_increase / 100.0)
+        if likely_assigned <= 0:
+            continue
+        detail = '; '.join(
+            f"contract_id={cid} was position={was_pos}, now magnitude={now_qty:g}"
+            for cid, was_pos, now_qty in changed
+        )
+        alerts.append(
+            f"EARLY_ASSIGNMENT_DETECTED: {symbol} -- ~{likely_assigned:g} contract(s) likely "
+            f"assigned (of {removed_qty:g} total short-put quantity removed across "
+            f"{len(changed)} contract(s): {detail}); STK position changed from "
+            f"{old_stock_qty:g} to {new_stock_qty:g} shares. Exact per-contract attribution "
+            f"is not determinable from position deltas alone when multiple legs changed -- "
+            f"verify manually."
+        )
     return alerts
 
 
@@ -221,6 +265,41 @@ def self_test():
             alerts = run(pos_path, base)
             assert len(alerts) == 1, alerts
 
+    def two_short_puts_same_symbol_one_stock_increase_not_double_counted():
+        # contract_id 1 (strike 170) vanishes AND contract_id 3 (strike 160)
+        # vanishes too, but stock only increased by 100 shares -- ONE of them
+        # was actually assigned, the other closed manually (no matching
+        # shares for it). Must emit exactly ONE alert for the symbol, not two
+        # -- independently checking each contract_id against the full 100-
+        # share increase would previously have fired for both.
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp) / 'baseline.json'
+            pos_path = Path(temp) / 'positions.json'
+            baseline = [short_put(1, -1, strike=170), short_put(3, -1, strike=160)]
+            base.write_text(json.dumps({'positions': baseline}))
+            fresh = [stock(100)]  # both option legs gone, only one contract's worth of shares
+            pos_path.write_text(json.dumps({'positions': fresh}))
+            alerts = run(pos_path, base)
+            assert len(alerts) == 1, alerts
+            assert 'contract_id=1' in alerts[0] and 'contract_id=3' in alerts[0], alerts[0]
+            assert '~1' in alerts[0], alerts[0]  # likely_assigned capped at 1, not 2
+
+    def partial_assignment_detected():
+        # 2 contracts at baseline, 1 remains (still nonzero -> "still open"
+        # under the old vanished-vs-present check, which silently missed
+        # this entirely). 100 shares appeared -- exactly one contract's
+        # worth -- consistent with a partial assignment of 1 of 2.
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp) / 'baseline.json'
+            pos_path = Path(temp) / 'positions.json'
+            baseline = [short_put(1, -2)]
+            base.write_text(json.dumps({'positions': baseline}))
+            fresh = [short_put(1, -1), stock(100)]
+            pos_path.write_text(json.dumps({'positions': fresh}))
+            alerts = run(pos_path, base)
+            assert len(alerts) == 1, alerts
+            assert '~1' in alerts[0], alerts[0]
+
     def baseline_updates_every_run():
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp) / 'baseline.json'
@@ -262,6 +341,9 @@ def self_test():
     check('vanished short put with no stock change is not flagged', manual_close_not_flagged)
     check('unchanged positions produce no alert', no_change_no_alert)
     check('zeroed (not absent) short put still detected', zeroed_not_absent_still_detected)
+    check('two short puts, one stock increase -- not double-counted',
+          two_short_puts_same_symbol_one_stock_increase_not_double_counted)
+    check('partial assignment (quantity reduced, not vanished) detected', partial_assignment_detected)
     check('baseline file updates on every run', baseline_updates_every_run)
     check('empty fresh payload preserves the previous baseline', empty_fresh_payload_preserves_baseline)
     check('empty fresh against an already-empty baseline is a real no-op', empty_fresh_against_empty_baseline_is_a_real_noop)
