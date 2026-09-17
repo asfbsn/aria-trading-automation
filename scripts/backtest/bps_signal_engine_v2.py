@@ -25,6 +25,7 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Literal
 
+import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -130,6 +131,8 @@ class BullPutSpreadSignalEngine:
                 # separate design question from which MA type gates entry.
                 ma150 = sma(signal_closes, 150)
                 close = closes[i]
+                ma150_gate: float | None = None
+                z_ma150: float | None = None
                 if self.mode == "vrp_only":
                     # EMA, not SMA, for the gate itself -- matches
                     # signal_core.py's 2026-09-14 dashboard-fidelity fix (a
@@ -141,6 +144,23 @@ class BullPutSpreadSignalEngine:
                     # above) -- narrower fix, not a blanket switch.
                     ma150_gate = ema(signal_closes, 150)
                     price_gate = ma150_gate is not None and close > ma150_gate
+
+                    tail = np.asarray(signal_closes[-21:], dtype=float)
+                    if len(tail) == 21 and np.all(tail > 0) and np.all(np.isfinite(tail)):
+                        sigma = float(np.std(np.log(tail[1:] / tail[:-1]), ddof=1))
+                        if (
+                            math.isfinite(sigma)
+                            and sigma > 0
+                            and ma150_gate is not None
+                            and math.isfinite(ma150_gate)
+                            and close > 0
+                        ):
+                            z_val = (close - ma150_gate) / (close * sigma)
+                            z_ma150 = float(z_val) if math.isfinite(z_val) else None
+                        else:
+                            z_ma150 = None
+                    else:
+                        z_ma150 = None
                 else:
                     bars_slice = [
                         {"open": opens[j], "high": highs[j], "low": lows[j], "close": closes[j]}
@@ -190,6 +210,7 @@ class BullPutSpreadSignalEngine:
                     "ma150": ma150, "short_strike": short_strike,
                     "long_strike": long_strike, "expiry": expiry_str,
                     "vrp_ratio": vrp_ratio, "mode": self.mode,
+                    "ema150": ma150_gate, "z_ma150": z_ma150,
                 })
                 if self.suppress_reentry:
                     open_until = expiry_str
@@ -229,6 +250,8 @@ def _self_test() -> None:
         for mode in ("vrp_only", "vrp_plus_baseline"):
             engine = engines[mode]
             assert all(entry["vrp_ratio"] >= engine.vrp_threshold for entry in engine.entries)
+        assert all(entry["ema150"] is None and entry["z_ma150"] is None for entry in engines["baseline"].entries)
+        assert all(entry["ema150"] is not None for entry in engines["vrp_only"].entries)
 
     # Ensure gate separation does not depend on a lucky real price trajectory.
     # Choose a real qualifying observation and place it on the sole eligible
@@ -320,6 +343,30 @@ def _self_test() -> None:
     expected_dates = [str(reentry_dates[MIN_BARS + 1].date()), str(reentry_dates[MIN_BARS + 3].date())]
     assert entry_dates == expected_dates, f"Expected entries on {expected_dates}, got {entry_dates}"
     print(f"PASS: suppress_reentry verification (True={len(engine_suppressed.entries)}, False={len(engine_unsuppressed.entries)})")
+
+    # Synthetic verification of z_ma150 math and baseline mode entries:
+    synth_entry = engine_suppressed.entries[0]
+    expected_tail = np.asarray(reentry_closes[:MIN_BARS + 1].tolist()[-21:], dtype=float)
+    expected_sigma = float(np.std(np.log(expected_tail[1:] / expected_tail[:-1]), ddof=1))
+    expected_ema150 = ema(reentry_closes[:MIN_BARS + 1].tolist(), 150)
+    expected_close = float(reentry_closes.iloc[MIN_BARS])
+    expected_z = (expected_close - expected_ema150) / (expected_close * expected_sigma)
+    assert synth_entry["z_ma150"] is not None, "Expected z_ma150 to be computed"
+    assert math.isclose(synth_entry["z_ma150"], expected_z, rel_tol=1e-9), (
+        f"Expected z_ma150 {expected_z}, got {synth_entry['z_ma150']}"
+    )
+    assert math.isclose(synth_entry["ema150"], expected_ema150, rel_tol=1e-9)
+
+    from unittest.mock import patch
+    with patch.object(sys.modules[BullPutSpreadSignalEngine.__module__], "entry_checks", return_value=({}, True)):
+        engine_baseline_synth = BullPutSpreadSignalEngine(mode="baseline")
+        engine_baseline_synth.generate(reentry_map)
+        assert len(engine_baseline_synth.entries) > 0, "Expected baseline synthetic entry"
+        assert all(
+            e["z_ma150"] is None and e["ema150"] is None
+            for e in engine_baseline_synth.entries
+        ), "Baseline synthetic entry must have z_ma150 and ema150 as None"
+    print("PASS: z_ma150 calculation parity and baseline None-entry verification")
 
 
 if __name__ == "__main__":

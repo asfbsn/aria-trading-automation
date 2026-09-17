@@ -14,6 +14,7 @@ import json
 import math
 from pathlib import Path
 import pickle
+import random
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 import uuid
@@ -32,6 +33,28 @@ from signal_core import MIN_BARS  # noqa: E402
 
 DEFAULT_IV_CACHE = REPO_ROOT / "state" / "ghost" / "iv_live.pkl"
 DEFAULT_UNIVERSE = REPO_ROOT / "data" / "universe.csv"
+
+MIN_Z_MA150_COMBINED = 1.5  # research/proposals/2026-09-17-gex-pin-ma150-extension.md — accepted screening candidate (lowest passing threshold of the three tested: 1.5, 2.0, 2.5)
+CANDIDATE_CAP = 15  # hard cap on the per-run IBKR quote-capture loop — observed ~40s/candidate against a 15-minute CLAUDE_TIMEOUT in daily-scan-ghost.sh
+FILTER_TAG = "gex_positive_z_ma150_ge_1.5"
+
+# Scope limits on what this collection can and cannot later claim (Astra,
+# 2026-09-17 -- keep these narrow, do not let a future readout overreach):
+#   1. A Ghost Ledger milestone of N>=30 rows across >=10 distinct
+#      signal_date sessions is an OPERATIONAL collection target, not a
+#      statistical confirmation threshold. It says nothing about power or
+#      re-establishes the research proposal's own frozen bootstrap protocol.
+#   2. candidates_list here is combined-filter-only (GEX POSITIVE and
+#      z_ma150 >= 1.5) -- this pipeline no longer captures a contemporaneous
+#      non-combined population, so Ghost data alone cannot measure
+#      "improvement vs. baseline" going forward. That comparison exists only
+#      in the frozen historical backtest (gex_pin_ma150_extension_test.py).
+#   3. suppress_reentry=False (below) means the SAME ticker can re-qualify
+#      on consecutive sessions with no cooldown -- a structurally different
+#      population from the suppress_reentry=True pool the research script
+#      validated performance on. Valid for this system's actual purpose
+#      (displayed-quote friction sampling on the accepted filter); not a
+#      like-for-like population for re-deriving the backtest's P&L numbers.
 
 
 def get_last_completed_session(as_of: Optional[datetime.date] = None) -> datetime.date:
@@ -183,6 +206,32 @@ def generate_candidate_id(
     return hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
 
 
+def apply_extension_filter_and_cap(
+    surviving: List[Tuple[Dict[str, Any], str]],
+    gex_regime: str,
+    seed: str,
+    min_z: float = MIN_Z_MA150_COMBINED,
+    cap: int = CANDIDATE_CAP,
+) -> Tuple[List[Tuple[Dict[str, Any], str]], List[Tuple[Dict[str, Any], str]], bool]:
+    """Filter surviving candidates by GEX POSITIVE and z_ma150 >= min_z, then apply deterministic cap."""
+    combined_pass: List[Tuple[Dict[str, Any], str]] = []
+    if gex_regime == "POSITIVE":
+        for entry, sig_date in surviving:
+            z = entry.get("z_ma150")
+            if z is not None and z >= min_z:
+                combined_pass.append((entry, sig_date))
+
+    if len(combined_pass) > cap:
+        subsample_applied = True
+        sorted_list = sorted(combined_pass, key=lambda pair: pair[0].get("code", ""))
+        final_candidates = random.Random(seed).sample(sorted_list, cap)
+    else:
+        subsample_applied = False
+        final_candidates = list(combined_pass)
+
+    return final_candidates, combined_pass, subsample_applied
+
+
 def run_synthetic_filter_test() -> None:
     """Synthetic unit test proving older qualifying dates appear in engine.entries
 
@@ -266,6 +315,8 @@ def run_synthetic_filter_test() -> None:
         "derived_short_strike": surviving_entry["short_strike"],
         "derived_long_strike": surviving_entry["long_strike"],
         "derived_expiry": surviving_entry["expiry"],
+        "z_ma150": round(float(surviving_entry["z_ma150"]), 4) if surviving_entry.get("z_ma150") is not None else None,
+        "filter_tag": FILTER_TAG,
     }
     json_payload = {
         "run_id": "test_run",
@@ -275,9 +326,83 @@ def run_synthetic_filter_test() -> None:
     output_str = json.dumps(json_payload)
     assert older_target not in output_str, f"Older target date {older_target} found in output JSON!"
     assert today_target in output_str, f"Today target date {today_target} missing from output JSON!"
+    assert "z_ma150" in output_str, "z_ma150 missing from output JSON!"
+    assert "filter_tag" in output_str, "filter_tag missing from output JSON!"
 
     print(f"PASS: Older date {older_target} present in engine.entries, strictly absent from output JSON.")
     print(f"PASS: Only target date {today_target} retained in candidate output (1 candidate in final JSON).\n")
+
+    # 4. Extension filter & deterministic cap tests
+    print("--- Running Extension Filter & Deterministic Cap Synthetic Tests ---")
+    c_qual = ({"code": "QUAL", "z_ma150": 1.75}, today_target)
+    c_low = ({"code": "LOWZ", "z_ma150": 1.49}, today_target)
+    c_none = ({"code": "NONEZ", "z_ma150": None}, today_target)
+    c_missing = ({"code": "MISSZ"}, today_target)
+
+    # Candidate with z_ma150 >= 1.5 and GEX POSITIVE survives
+    # Candidate with z_ma150 < 1.5 is excluded
+    # Candidate with z_ma150 == None / missing is excluded (fails closed)
+    final, passed, subsample = apply_extension_filter_and_cap(
+        [c_qual, c_low, c_none, c_missing],
+        gex_regime="POSITIVE",
+        seed=today_target,
+    )
+    assert len(final) == 1 and final[0][0]["code"] == "QUAL", f"Expected only QUAL to pass, got {[c[0]['code'] for c in final]}"
+    assert subsample is False
+    print("PASS: Candidate with z_ma150 >= 1.5 and GEX POSITIVE survives into final list.")
+    print("PASS: Candidate with z_ma150 < 1.5 is excluded.")
+    print("PASS: Candidate with z_ma150 == None (or missing) is excluded (fails closed).")
+
+    # When run-level GEX regime is NEGATIVE, every candidate is excluded regardless of z_ma150
+    final_neg, passed_neg, subsample_neg = apply_extension_filter_and_cap(
+        [c_qual, ({"code": "HIGHZ", "z_ma150": 3.5}, today_target)],
+        gex_regime="NEGATIVE",
+        seed=today_target,
+    )
+    assert len(final_neg) == 0 and len(passed_neg) == 0, f"Expected 0 passing on NEGATIVE GEX, got {len(final_neg)}"
+    assert subsample_neg is False
+    print("PASS: Run-level GEX NEGATIVE excludes every candidate regardless of z_ma150.")
+
+    # combined_pass list longer than CANDIDATE_CAP is reduced to exactly CANDIDATE_CAP
+    many_candidates = [
+        ({"code": f"TICK{i:02d}", "z_ma150": 2.0}, today_target)
+        for i in range(CANDIDATE_CAP + 10)
+    ]
+    final_capped, passed_capped, subsample_capped = apply_extension_filter_and_cap(
+        many_candidates,
+        gex_regime="POSITIVE",
+        seed=today_target,
+    )
+    assert len(passed_capped) == CANDIDATE_CAP + 10
+    assert len(final_capped) == CANDIDATE_CAP
+    assert subsample_capped is True
+    print(f"PASS: combined_pass list longer than CANDIDATE_CAP is reduced to exactly CANDIDATE_CAP ({CANDIDATE_CAP}).")
+
+    # Two separate calls with same last_session_str seed produce IDENTICAL sampled output (determinism)
+    final_capped_2, _, _ = apply_extension_filter_and_cap(
+        many_candidates,
+        gex_regime="POSITIVE",
+        seed=today_target,
+    )
+    assert [c[0]["code"] for c in final_capped] == [c[0]["code"] for c in final_capped_2], (
+        "Subsampling was not deterministic across calls with identical seed!"
+    )
+    print("PASS: Two separate calls with identical seed produce identical sampled output (determinism).")
+
+    # combined_pass list of length <= CANDIDATE_CAP is returned unchanged (no sampling), subsample_applied is False
+    few_candidates = [
+        ({"code": f"FEW{i:02d}", "z_ma150": 2.0}, today_target)
+        for i in range(CANDIDATE_CAP - 5)
+    ]
+    final_few, passed_few, subsample_few = apply_extension_filter_and_cap(
+        few_candidates,
+        gex_regime="POSITIVE",
+        seed=today_target,
+    )
+    assert len(final_few) == len(few_candidates)
+    assert final_few == few_candidates
+    assert subsample_few is False
+    print("PASS: combined_pass list of length <= CANDIDATE_CAP is returned unchanged (no sampling), subsample_applied is False.\n")
 
 
 def main() -> None:
@@ -379,15 +504,16 @@ def main() -> None:
     surviving = filter_entries_to_target_session(engine.entries, data_map, last_session_str)
     print(f"Surviving candidates for session {last_session_str}: {len(surviving)}")
 
-    # 7. Call dix_fetcher_v2.latest() once per run
+    # 7. Call dix_fetcher_v2.gex_regime() as of signal bar date (last_session_str)
     try:
-        gex_data = dix_fetcher_v2.latest()
+        series = dix_fetcher_v2.load_series()
+        gex_data = dix_fetcher_v2.gex_regime(series, as_of_date=last_session_str)
         gex_regime = gex_data.get("regime", "NEGATIVE")
         gex_percentile = gex_data.get("percentile_rank")
         gex_data_available = gex_data.get("data_available", False)
         gex_as_of = gex_data.get("as_of_date")
     except Exception as exc:
-        print(f"WARNING: dix_fetcher_v2.latest() failed: {exc}, using fail-safe NEGATIVE")
+        print(f"WARNING: dix fetch/regime failed: {exc}, using fail-safe NEGATIVE")
         gex_regime = "NEGATIVE"
         gex_percentile = None
         gex_data_available = False
@@ -410,9 +536,16 @@ def main() -> None:
         except Exception as exc:
             print(f"WARNING: Could not load iv_meta from {meta_path}: {exc}")
 
+    # 8b. Apply extension filter (GEX POSITIVE + z_ma150 >= 1.5) and deterministic cap
+    final_candidates, combined_pass, subsample_applied = apply_extension_filter_and_cap(
+        surviving, gex_regime=gex_regime, seed=last_session_str
+    )
+    print(f"Extension filter: pre={len(surviving)}, pass={len(combined_pass)}, "
+          f"emitted={len(final_candidates)} (subsample_applied={subsample_applied})")
+
     # 9. Format candidates
     candidates_list: List[Dict[str, Any]] = []
-    for entry, sig_date in surviving:
+    for entry, sig_date in final_candidates:
         ticker = entry["code"]
         trade_date = entry["date"]
         short_strike = float(entry["short_strike"])
@@ -463,6 +596,8 @@ def main() -> None:
             "gex_percentile": gex_percentile,
             "gex_data_available": gex_data_available,
             "gex_as_of": gex_as_of,
+            "z_ma150": round(float(entry["z_ma150"]), 4),
+            "filter_tag": FILTER_TAG,
         })
 
     # 10. Write output JSON
@@ -479,6 +614,14 @@ def main() -> None:
         "candidates": candidates_list,
         "skipped_missing_iv": engine.skipped_missing_iv,
         "universe_count": universe_count,
+        "pre_extension_filter_count": len(surviving),
+        "combined_filter_pass_count": len(combined_pass),
+        "emitted_candidate_count": len(candidates_list),
+        "subsample_applied": subsample_applied,
+        "subsample_seed": last_session_str,
+        "extension_filter_threshold": MIN_Z_MA150_COMBINED,
+        "extension_filter_gex_requirement": "POSITIVE",
+        "candidate_cap": CANDIDATE_CAP,
     }
 
     with open(out_path, "w", encoding="utf-8") as f:

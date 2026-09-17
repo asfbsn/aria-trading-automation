@@ -51,7 +51,7 @@ ROOT = Path(__file__).resolve().parents[2]
 QUOTE_SKEW_MAX_SECONDS = 15
 INPUT_FIELDS = '''candidate_id run_id trade_date signal_bar_date mode ticker
 signal_close ma150 vrp_ratio iv_current hv_current iv_as_of_date gex_regime
-gex_percentile gex_data_available gex_as_of derived_short_strike derived_long_strike
+gex_percentile gex_data_available gex_as_of z_ma150 filter_tag derived_short_strike derived_long_strike
 derived_expiry resolved_short_strike resolved_long_strike resolved_expiry
 resolution_status underlying_spot short_bid short_ask short_bid_size short_ask_size
 short_quote_ts_utc long_bid long_ask long_bid_size long_ask_size long_quote_ts_utc
@@ -59,7 +59,7 @@ short_quote_ts_is_estimated long_quote_ts_is_estimated market_data_type in_rth_c
 code_version_hash git_head git_dirty'''.split()
 ENTRY_FIELDS = '''run_id quote_ts_utc trade_date signal_bar_date mode ticker candidate_id
 in_rth market_data_type signal_close ma150 vrp_ratio iv_current hv_current
-iv_as_of_date gex_regime gex_percentile gex_data_available gex_as_of
+iv_as_of_date gex_regime gex_percentile gex_data_available gex_as_of z_ma150 filter_tag
 resolved_short_strike resolved_long_strike resolved_expiry resolution_status
 underlying_spot short_bid short_ask short_mid short_bid_size short_ask_size long_bid
 long_ask long_mid long_bid_size long_ask_size short_quote_ts_utc long_quote_ts_utc
@@ -240,7 +240,8 @@ def self_test():
                 short_bid_size=3, long_bid_size=2, market_data_type='live',
                 short_quote_ts_utc='2026-09-15T14:00:00Z',
                 long_quote_ts_utc='2026-09-15T14:00:02+00:00',
-                short_quote_ts_is_estimated=False, long_quote_ts_is_estimated=False)
+                short_quote_ts_is_estimated=False, long_quote_ts_is_estimated=False,
+                z_ma150=1.8765, filter_tag='gex_positive_z_ma150_ge_1.5')
     failures = 0
     with tempfile.TemporaryDirectory(prefix='ghost-self-test-') as temp:
         state = Path(temp)
@@ -254,6 +255,8 @@ def self_test():
                     displayed_crossing_cost_per_leg=.1, spread_width_pct_of_credit=4/11,
                     quote_skew_seconds=2).items():
                 assert math.isclose(float(row[key]), expected, abs_tol=1e-12), key
+            assert math.isclose(float(row['z_ma150']), 1.8765, abs_tol=1e-6), 'z_ma150'
+            assert row['filter_tag'] == 'gex_positive_z_ma150_ge_1.5', 'filter_tag'
         def skew():
             # Must exceed QUOTE_SKEW_MAX_SECONDS (15s), not the old 5s bar.
             result = record({**base, 'candidate_id': 'skew', 'long_quote_ts_utc': '2026-09-15T14:00:20Z'})

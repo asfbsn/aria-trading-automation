@@ -99,6 +99,8 @@ Copy mode and signal_bar_date from the prescreen envelope when absent on an item
   "gex_percentile": 0.0,
   "gex_data_available": false,
   "gex_as_of": "<candidate.gex_as_of>",
+  "z_ma150": 0.0,
+  "filter_tag": "<candidate.filter_tag>",
   "derived_short_strike": 0.0,
   "derived_long_strike": 0.0,
   "derived_expiry": "<candidate.derived_expiry>",
@@ -127,8 +129,9 @@ Copy mode and signal_bar_date from the prescreen envelope when absent on an item
 }
 ```
 Numeric/boolean placeholders above are not defaults: copy signal/GEX/derived
-values from the candidate and git_dirty from GIT_DIRTY. Replace resolved/quote
-nulls only with verified observations. Preserve unavailable prescreen values.
+values (including z_ma150 and filter_tag copied verbatim) from the candidate
+and git_dirty from GIT_DIRTY. Replace resolved/quote nulls only with verified
+observations. Preserve unavailable prescreen values.
 
 ## Output
 End with exactly one summary line, nothing else:
