@@ -157,6 +157,24 @@ For the gating threshold (`z_ma150_proximity_upper_bound = 0.50` only), **on the
 
 Registration is unblocked by this freeze. The 2×2 overlap diagnostic (Section 4) remains a required implementation output, already built, not a separate decision.
 
+## Results (registered run `20260918T174731Z_998760cb225f`, 2026-09-18T17:47:31Z, completed 2026-09-18T17:48:31Z, exit 0, 60.86s)
+
+**Hypothesis rejected — a clean, decisive FAIL, not the strictness-driven INCONCLUSIVE the margin freeze anticipated.** Every gate FAILs confidently at all three thresholds (`z<=0.15`, `0.30`, gating `0.50`); no CI anywhere near zero, `n=491` at the gating threshold (well past the `n>=30` floor).
+
+**Gating threshold (`z_ma150 <= 0.50`), `combined` (n=491) vs. `GEX-only` (n=4194):**
+- Gate A (`reach_by_10` superiority): **FAIL** — combined 11.20% vs. GEX-only 29.97%, CI on the difference `[-22.34%, -15.66%]`. The proximity filter reaches the 80% profit target within 10 days *less* than half as often as the comparator, not faster.
+- Gate B (`reach_by_10` vs. `proximity-only`): INCONCLUSIVE (CI `[-0.07%, 1.46%]`) — moot given Gate A's FAIL already fails the primary metric overall.
+- Gate C (terminal breach non-inferiority): **FAIL** — 27.90% vs. 13.09%, CI `[10.10%, 19.02%]` against a 0.00% margin.
+- Gate D (intraperiod breach non-inferiority): **FAIL** — 54.99% vs. 23.80%, CI `[27.79%, 34.42%]`.
+- Gate E (eventual reach non-inferiority): **FAIL** — 76.78% vs. 89.87%, CI `[8.56%, 17.11%]`.
+- **Overall: FAIL.** Exploratory thresholds `0.15` and `0.30` show the identical pattern, same direction, similar magnitude — narrowing the band does not rescue the result.
+
+**2x2 overlap diagnostic (Section 4/8), OOS baseline pool, n=5121:** 617 candidates (12.05%) in the proximity band; 3378 (65.96%) in production's `near_ma150_support` band; 617 of those 617 proximity-band candidates (100.00%) also fall inside the production band, but the production band is roughly 5.5x larger than the proximity band (`P(in proximity | in production) = 18.27%`) — one-directional near-total containment, not redundancy, exactly the asymmetry Astra's round-3 correction anticipated.
+
+**Interpretation, held to the same standard this document has applied throughout — descriptive, not causal:** within this specific `vrp_only`-gated pool, proximity to EMA150 associates with materially *worse* outcomes on every measured axis, not better. This is directionally consistent with (not a joint test of, and not established alongside) the accepted 09-17 proposal's finding that *extension* away from EMA150 associates with *better* outcomes in the same pool. See the market-mechanics discussion delivered alongside this commit for a structural read of why — held explicitly to the same "not established by this design" standard as every mechanism claim in Section 1.
+
+**No further sweep.** Margins were not loosened after seeing this result, per Section 7/8's own rule. This screening candidate is closed, not iterated on.
+
 ## Revision Log
 
 - **2026-09-17, initial → round 1**: first draft.

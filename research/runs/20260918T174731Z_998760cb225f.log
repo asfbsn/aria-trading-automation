@@ -1,0 +1,135 @@
+PROVENANCE SHA256 SCRIPT /home/assaf/Projects/aria-trading/scripts/backtest/z_ma150_proximity_dit_test.py: 045c68fe6717e5d4aee5e740d14af870e6fde745d094ded8bf7465409a228587
+PROVENANCE SHA256 FROZEN_SCRIPT /home/assaf/Projects/aria-trading/scripts/backtest/gex_pin_ma150_extension_test.py: bde0e4afe7a31e1e26134899f4c9510d8cbb3a6888f954a5889cde0a11dd31f0
+PROVENANCE SHA256 SIGNAL_ENGINE /home/assaf/Projects/aria-trading/scripts/backtest/bps_signal_engine_v2.py: a50b26420c1595d6710c915aecf887ee7e5d8f1ea1be9378ecb7c15b35fa4202
+PROVENANCE SHA256 IV_HV_CACHE /home/assaf/Projects/aria-trading/scripts/backtest/run_out_dolthub_iv/volatility_history.pkl: 564a31fc4dca46f8056213f5f80def22f6e90f68e7d77d45120215375a4a0d67
+PROVENANCE SHA256 OHLCV_CACHE /home/assaf/Projects/aria-trading/scripts/backtest/mega750_ohlcv_cache.pkl: 4e8272ba35cfacdab0c07de63cf971969b6340d05ed118153f726e17282a078b
+PROVENANCE SHA256 GEX_DIX_CACHE /home/assaf/Projects/aria-trading/scripts/backtest/run_out_dix/dix_cache.csv: 5009fd64a5d27c6eacb18a61eeae28a81a99f802f01492e4eef2da4b5c466b21
+PROVENANCE SHA256 UNIVERSE_CSV /home/assaf/Projects/aria-trading/data/universe.csv: 68bb34e110110f580bef5ccaa0666dc21bf1bf1eaed6ee6f331b381dbbb3a23e
+PROVENANCE SHA256 HOLIDAYS /home/assaf/Projects/aria-trading/us-market-holidays.txt: f769de4a1e9aaec6b57dfdc2ef200df87ed7d36450997cb5531a1c46a92206dd
+PROVENANCE SHA256 PROPOSAL /home/assaf/Projects/aria-trading/research/proposals/2026-09-18-z-ma150-proximity-dit.md: d60517a1c30ebe6095db0e3cf282e078c9bfec6cbf273a572cec0886b1f2f344
+PROVENANCE GIT: head=0cfac898a63de5d36cb726757f6fbb60129433fb dirty=True
+Development screen: z_ma150 proximity and DIT on fixed VRP entry pool.
+Implements research/proposals/2026-09-18-z-ma150-proximity-dit.md (fourth draft).
+IS=2023-07-26..2025-01-26; OOS=2025-01-27..2026-07-24; bootstrap seed=20260918, reps=10000, block_days=45
+Primary gating threshold: z_ma150_proximity_upper_bound = 0.5; exploratory: (0.15, 0.3)
+Universe cache omissions (3): ['NVDA', 'BRKB', 'BFB']
+Universe loaded: 748 of 748 tickers
+Calendar: holiday file authoritative for [2026, 2027]; other years use weekday sessions pooled across the loaded cached universe.
+[vrp_only] entries=8351; candidates skipped for missing/invalid IV/HV=60480
+Undefined z_ma150 (zero/nonfinite stdev): 0; retained in baseline, fails proximity filters closed.
+Pooled scored baseline cushion_pct terciles: [0.06810811596743939, 0.14191411644826046]; ties stay together.
+
+=================================================================
+=== 2x2 Overlap Diagnostic (OOS Baseline Pool, Arm 1) ===
+Total OOS baseline candidates: 5121
+Proximity band (z_ma150 <= 0.50): 617 (12.05%)
+Production band (0 <= (close-ema150)/ema150 <= 0.10): 3378 (65.96%)
+
+Contingency Table:
+  [In Proximity & In Production]:       617 (12.05%)
+  [In Proximity & NOT In Production]:     0 (0.00%)
+  [NOT In Proximity & In Production]:  2761 (53.92%)
+  [NOT In Proximity & NOT Production]: 1743 (34.04%)
+
+One-way Containment Fractions:
+  P(In Production | In Proximity) = 100.00% (617/617)
+  P(In Proximity | In Production) = 18.27% (617/3378)
+=================================================================
+
+IS baseline: candidates=3230 n=3230 excluded_oos_cutoff=0 excluded_missing_terminal_price=0 excluded_missing_midperiod_price=0 reach_by_10=35.17% reach_by_expiry=92.97% median_dit=14.0d breach_at_expiry=9.32% ever_breached_intraperiod=17.99% total_pnl=$66645.57 mean_pnl=$20.63
+  cushion_pct low: n=971 reach_by_10=14.73% breach_at_expiry=24.20%
+  cushion_pct middle: n=1117 reach_by_10=30.35% breach_at_expiry=4.74%
+  cushion_pct high: n=1142 reach_by_10=57.27% breach_at_expiry=1.14%
+IS gex_only: candidates=2974 n=2974 excluded_oos_cutoff=0 excluded_missing_terminal_price=0 excluded_missing_midperiod_price=0 reach_by_10=35.78% reach_by_expiry=92.60% median_dit=14.0d breach_at_expiry=9.72% ever_breached_intraperiod=18.53% total_pnl=$50393.19 mean_pnl=$16.94
+  cushion_pct low: n=881 reach_by_10=15.10% breach_at_expiry=25.43%
+  cushion_pct middle: n=1022 reach_by_10=31.80% breach_at_expiry=5.19%
+  cushion_pct high: n=1071 reach_by_10=56.58% breach_at_expiry=1.12%
+IS z<=0.50 proximity_only: candidates=260 n=260 excluded_oos_cutoff=0 excluded_missing_terminal_price=0 excluded_missing_midperiod_price=0 reach_by_10=13.85% reach_by_expiry=78.85% median_dit=20.0d breach_at_expiry=28.85% ever_breached_intraperiod=56.54% total_pnl=$10578.55 mean_pnl=$40.69
+  cushion_pct low: n=224 reach_by_10=10.27% breach_at_expiry=32.59%
+  cushion_pct middle: n=26 reach_by_10=19.23% breach_at_expiry=7.69%
+  cushion_pct high: n=10 reach_by_10=80.00% breach_at_expiry=0.00%
+IS z<=0.50 combined: candidates=237 n=237 excluded_oos_cutoff=0 excluded_missing_terminal_price=0 excluded_missing_midperiod_price=0 reach_by_10=13.92% reach_by_expiry=78.48% median_dit=20.0d breach_at_expiry=28.69% ever_breached_intraperiod=56.54% total_pnl=$9989.23 mean_pnl=$42.15
+  cushion_pct low: n=202 reach_by_10=10.40% breach_at_expiry=32.67%
+  cushion_pct middle: n=26 reach_by_10=19.23% breach_at_expiry=7.69%
+  cushion_pct high: n=9 reach_by_10=77.78% breach_at_expiry=0.00%
+IS z<=0.15 proximity_only: candidates=85 n=85 excluded_oos_cutoff=0 excluded_missing_terminal_price=0 excluded_missing_midperiod_price=0 reach_by_10=7.06% reach_by_expiry=75.29% median_dit=21.0d breach_at_expiry=35.29% ever_breached_intraperiod=65.88% total_pnl=$3349.09 mean_pnl=$39.40
+  cushion_pct low: n=79 reach_by_10=6.33% breach_at_expiry=37.97%
+  cushion_pct middle: n=5 reach_by_10=0.00% breach_at_expiry=0.00%
+  cushion_pct high: n=1 reach_by_10=100.00% breach_at_expiry=0.00%
+IS z<=0.15 combined: candidates=78 n=78 excluded_oos_cutoff=0 excluded_missing_terminal_price=0 excluded_missing_midperiod_price=0 reach_by_10=7.69% reach_by_expiry=73.08% median_dit=21.0d breach_at_expiry=35.90% ever_breached_intraperiod=66.67% total_pnl=$2445.21 mean_pnl=$31.35
+  cushion_pct low: n=72 reach_by_10=6.94% breach_at_expiry=38.89%
+  cushion_pct middle: n=5 reach_by_10=0.00% breach_at_expiry=0.00%
+  cushion_pct high: n=1 reach_by_10=100.00% breach_at_expiry=0.00%
+IS z<=0.30 proximity_only: candidates=179 n=179 excluded_oos_cutoff=0 excluded_missing_terminal_price=0 excluded_missing_midperiod_price=0 reach_by_10=11.73% reach_by_expiry=79.33% median_dit=19.5d breach_at_expiry=30.17% ever_breached_intraperiod=58.66% total_pnl=$8478.13 mean_pnl=$47.36
+  cushion_pct low: n=158 reach_by_10=8.23% breach_at_expiry=33.54%
+  cushion_pct middle: n=15 reach_by_10=20.00% breach_at_expiry=6.67%
+  cushion_pct high: n=6 reach_by_10=83.33% breach_at_expiry=0.00%
+IS z<=0.30 combined: candidates=161 n=161 excluded_oos_cutoff=0 excluded_missing_terminal_price=0 excluded_missing_midperiod_price=0 reach_by_10=11.18% reach_by_expiry=78.88% median_dit=21.0d breach_at_expiry=29.81% ever_breached_intraperiod=59.63% total_pnl=$8218.50 mean_pnl=$51.05
+  cushion_pct low: n=141 reach_by_10=7.80% breach_at_expiry=33.33%
+  cushion_pct middle: n=15 reach_by_10=20.00% breach_at_expiry=6.67%
+  cushion_pct high: n=5 reach_by_10=80.00% breach_at_expiry=0.00%
+OOS baseline: candidates=5121 n=4762 excluded_oos_cutoff=359 excluded_missing_terminal_price=0 excluded_missing_midperiod_price=0 reach_by_10=28.81% reach_by_expiry=89.29% median_dit=15.0d breach_at_expiry=13.96% ever_breached_intraperiod=25.18% total_pnl=$65856.30 mean_pnl=$13.83
+  cushion_pct low: n=1693 reach_by_10=12.40% breach_at_expiry=28.82%
+  cushion_pct middle: n=1547 reach_by_10=26.96% breach_at_expiry=8.86%
+  cushion_pct high: n=1522 reach_by_10=48.95% breach_at_expiry=2.63%
+OOS gex_only: candidates=4491 n=4194 excluded_oos_cutoff=297 excluded_missing_terminal_price=0 excluded_missing_midperiod_price=0 reach_by_10=29.97% reach_by_expiry=89.87% median_dit=14.0d breach_at_expiry=13.09% ever_breached_intraperiod=23.80% total_pnl=$80019.03 mean_pnl=$19.08
+  cushion_pct low: n=1471 reach_by_10=12.71% breach_at_expiry=27.53%
+  cushion_pct middle: n=1345 reach_by_10=27.36% breach_at_expiry=8.40%
+  cushion_pct high: n=1378 reach_by_10=50.94% breach_at_expiry=2.25%
+OOS z<=0.50 proximity_only: candidates=617 n=570 excluded_oos_cutoff=47 excluded_missing_terminal_price=0 excluded_missing_midperiod_price=0 reach_by_10=10.53% reach_by_expiry=75.61% median_dit=20.0d breach_at_expiry=29.30% ever_breached_intraperiod=56.84% total_pnl=$12758.10 mean_pnl=$22.38
+  cushion_pct low: n=484 reach_by_10=7.64% breach_at_expiry=32.85%
+  cushion_pct middle: n=72 reach_by_10=22.22% breach_at_expiry=11.11%
+  cushion_pct high: n=14 reach_by_10=50.00% breach_at_expiry=0.00%
+OOS z<=0.50 combined: candidates=531 n=491 excluded_oos_cutoff=40 excluded_missing_terminal_price=0 excluded_missing_midperiod_price=0 reach_by_10=11.20% reach_by_expiry=76.78% median_dit=20.0d breach_at_expiry=27.90% ever_breached_intraperiod=54.99% total_pnl=$14729.27 mean_pnl=$30.00
+  cushion_pct low: n=419 reach_by_10=8.35% breach_at_expiry=31.26%
+  cushion_pct middle: n=61 reach_by_10=22.95% breach_at_expiry=9.84%
+  cushion_pct high: n=11 reach_by_10=54.55% breach_at_expiry=0.00%
+OOS z<=0.15 proximity_only: candidates=225 n=202 excluded_oos_cutoff=23 excluded_missing_terminal_price=0 excluded_missing_midperiod_price=0 reach_by_10=10.40% reach_by_expiry=71.78% median_dit=20.0d breach_at_expiry=32.67% ever_breached_intraperiod=59.90% total_pnl=$112.73 mean_pnl=$0.56
+  cushion_pct low: n=172 reach_by_10=6.98% breach_at_expiry=36.63%
+  cushion_pct middle: n=22 reach_by_10=22.73% breach_at_expiry=13.64%
+  cushion_pct high: n=8 reach_by_10=50.00% breach_at_expiry=0.00%
+OOS z<=0.15 combined: candidates=197 n=175 excluded_oos_cutoff=22 excluded_missing_terminal_price=0 excluded_missing_midperiod_price=0 reach_by_10=10.86% reach_by_expiry=73.71% median_dit=20.0d breach_at_expiry=30.86% ever_breached_intraperiod=57.71% total_pnl=$3532.80 mean_pnl=$20.19
+  cushion_pct low: n=150 reach_by_10=8.00% breach_at_expiry=34.00%
+  cushion_pct middle: n=19 reach_by_10=21.05% breach_at_expiry=15.79%
+  cushion_pct high: n=6 reach_by_10=50.00% breach_at_expiry=0.00%
+OOS z<=0.30 proximity_only: candidates=394 n=361 excluded_oos_cutoff=33 excluded_missing_terminal_price=0 excluded_missing_midperiod_price=0 reach_by_10=11.36% reach_by_expiry=75.62% median_dit=20.0d breach_at_expiry=28.25% ever_breached_intraperiod=57.06% total_pnl=$9188.37 mean_pnl=$25.45
+  cushion_pct low: n=304 reach_by_10=7.24% breach_at_expiry=32.57%
+  cushion_pct middle: n=46 reach_by_10=26.09% breach_at_expiry=6.52%
+  cushion_pct high: n=11 reach_by_10=63.64% breach_at_expiry=0.00%
+OOS z<=0.30 combined: candidates=343 n=312 excluded_oos_cutoff=31 excluded_missing_terminal_price=0 excluded_missing_midperiod_price=0 reach_by_10=12.18% reach_by_expiry=76.28% median_dit=20.0d breach_at_expiry=27.24% ever_breached_intraperiod=55.45% total_pnl=$10774.96 mean_pnl=$34.54
+  cushion_pct low: n=263 reach_by_10=7.98% breach_at_expiry=31.18%
+  cushion_pct middle: n=40 reach_by_10=27.50% breach_at_expiry=7.50%
+  cushion_pct high: n=9 reach_by_10=66.67% breach_at_expiry=0.00%
+
+--- Threshold z<=0.50 (Gating) ---
+Combined arm trades: n=491
+Gate A (reach_by_10 vs GEX-only): FAIL (CI=[-22.34%, -15.66%])
+Gate B (reach_by_10 vs Proximity-only): INCONCLUSIVE (CI=[-0.07%, 1.46%])
+  -> Primary Metric Overall: FAIL
+Gate C (terminal breach non-inferiority): FAIL (CI=[10.10%, 19.02%], margin=0.00%)
+Gate D (intraperiod breach non-inferiority): FAIL (CI=[27.79%, 34.42%], margin=0.00%)
+Gate E (eventual reach non-inferiority): FAIL (CI=[8.56%, 17.11%], margin=0.00%)
+  -> Non-Inferiority Overall: FAIL
+OVERALL VERDICT: FAIL
+
+--- Threshold z<=0.15 (Exploratory) ---
+Combined arm trades: n=175
+Gate A (reach_by_10 vs GEX-only): FAIL (CI=[-23.75%, -14.85%])
+Gate B (reach_by_10 vs Proximity-only): INCONCLUSIVE (CI=[-0.81%, 1.67%])
+  -> Primary Metric Overall: FAIL
+Gate C (terminal breach non-inferiority): FAIL (CI=[10.53%, 24.97%], margin=0.00%)
+Gate D (intraperiod breach non-inferiority): FAIL (CI=[27.77%, 42.09%], margin=0.00%)
+Gate E (eventual reach non-inferiority): FAIL (CI=[9.54%, 21.90%], margin=0.00%)
+  -> Non-Inferiority Overall: FAIL
+OVERALL VERDICT: FAIL
+
+--- Threshold z<=0.30 (Exploratory) ---
+Combined arm trades: n=312
+Gate A (reach_by_10 vs GEX-only): FAIL (CI=[-21.21%, -15.12%])
+Gate B (reach_by_10 vs Proximity-only): INCONCLUSIVE (CI=[-0.19%, 2.07%])
+  -> Primary Metric Overall: FAIL
+Gate C (terminal breach non-inferiority): FAIL (CI=[9.06%, 19.51%], margin=0.00%)
+Gate D (intraperiod breach non-inferiority): FAIL (CI=[26.94%, 37.15%], margin=0.00%)
+Gate E (eventual reach non-inferiority): FAIL (CI=[9.08%, 17.62%], margin=0.00%)
+  -> Non-Inferiority Overall: FAIL
+OVERALL VERDICT: FAIL
