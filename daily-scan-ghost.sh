@@ -228,5 +228,19 @@ with (state / '.logger.lock').open('a') as lock:
                 handle.write(header.getvalue().encode('utf-8'))
 PY
 notify "ARIA Ghost System complete" "$TODAY"
-send_telegram "ARIA Ghost System — ${TODAY}. $(tail -n 1 "$RUN_OUTPUT")" "$LOG_FILE"
+# Agent's own summary line is counts-only by prompt spec (no ticker names --
+# the attached $LOG_FILE has those, in its "accepted (TICKERS)" line, but
+# that's an attachment, easy to miss). Pull accepted tickers straight from
+# today's ghost_entries.csv rows for the Telegram text itself.
+ACCEPTED_TICKERS="$(python3 - "$TODAY" <<'PY'
+import sys
+from scripts.ghost.ghost_fill_logger import ROOT, rows
+today = sys.argv[1]
+entries = rows(ROOT / 'state/ghost/ghost_entries.csv')
+print(','.join(r['ticker'] for r in entries if r['trade_date'] == today))
+PY
+)"
+TELEGRAM_MSG="ARIA Ghost System — ${TODAY}. $(tail -n 1 "$RUN_OUTPUT")"
+[ -n "$ACCEPTED_TICKERS" ] && TELEGRAM_MSG="$TELEGRAM_MSG Accepted: $ACCEPTED_TICKERS"
+send_telegram "$TELEGRAM_MSG" "$LOG_FILE"
 echo "[$RUN_TS] Done → $LOG_FILE" >>"$ERR_FILE"
