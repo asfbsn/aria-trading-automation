@@ -84,9 +84,31 @@ if [ "${FORCE_RUN:-false}" != "true" ]; then
     notify "ARIA Ghost System (Marks) skipped" "$TODAY — US market holiday"
     exit 0
   fi
+  # 10#$(...) forces base-10 parsing — "0900" as a bare int is invalid octal.
+  # Target ET window: 15:45-15:59 America/New_York (end-of-day pricing within RTH).
+  # Matches the gtc-guard.sh/exit-guard.sh pattern to handle box cron CRON_TZ bug.
+  NY_HHMM=$((10#$(TZ='America/New_York' date +%H%M)))
+  if [ "$NY_HHMM" -lt 1545 ] || [ "$NY_HHMM" -ge 1600 ]; then
+    echo "[$RUN_TS] Outside 15:45-15:59 America/New_York (NY time now: $NY_HHMM) — skip." >>"$ERR_FILE"
+    exit 0
+  fi
 fi
 
 cd "$ARIA_HOME"
+# Fetch real settled closes for current open positions via yfinance.
+# Settled closes reflect the last completed trading session (yesterday's close),
+# serving as lagged structural check evidence, kept explicitly separate from today's
+# live hypothetical-exit quotes captured by the marking prompt.
+SETTLED_CLOSES_FILE="$STATE_DIR/ghost/settled_closes.json"
+echo "[$RUN_TS] Fetching settled closes -> $SETTLED_CLOSES_FILE" >>"$ERR_FILE"
+timeout 5m "$ARIA_HOME/scripts/backtest/.venv/bin/python3" \
+  "$ARIA_HOME/scripts/ghost/fetch_settled_closes.py" \
+  --out "$SETTLED_CLOSES_FILE" \
+  --as-of-date "$TODAY" \
+  >>"$ERR_FILE" 2>&1 || {
+    echo "[$RUN_TS] WARNING: fetch_settled_closes.py failed (exit $?); continuing with unmeasured structural check" >>"$ERR_FILE"
+}
+
 OPEN_POSITIONS_FILE="$STATE_DIR/scratch/ghost_open_positions_${TODAY}.json"
 # Generate today's open positions ourselves. ghost_exit_logger.py needs pandas/
 # signal_core/dix_fetcher_v2 (the backtest venv). 10m timeout matches

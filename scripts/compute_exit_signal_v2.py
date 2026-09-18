@@ -423,6 +423,112 @@ def evaluate_profit_target_and_time_stop(
     return profit_target, time_stop
 
 
+def get_expected_last_completed_session(
+    ref_date_str: Optional[str] = None,
+    holidays_file: Optional[Path] = None,
+) -> str:
+    """Calculate the expected last completed trading session prior to ref_date."""
+    if holidays_file is None:
+        holidays_file = _HERE.parent / "us-market-holidays.txt"
+    holidays = set()
+    if holidays_file.exists():
+        import re
+        holidays = {
+            line.strip()
+            for line in holidays_file.read_text(encoding="utf-8").splitlines()
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", line.strip())
+        }
+
+    if ref_date_str:
+        try:
+            ref_date = datetime.date.fromisoformat(ref_date_str)
+        except (ValueError, TypeError):
+            from zoneinfo import ZoneInfo
+            ref_date = datetime.datetime.now(ZoneInfo("America/New_York")).date()
+    else:
+        from zoneinfo import ZoneInfo
+        ref_date = datetime.datetime.now(ZoneInfo("America/New_York")).date()
+
+    cur = ref_date - datetime.timedelta(days=1)
+    while True:
+        if cur.weekday() < 5 and cur.isoformat() not in holidays:
+            return cur.isoformat()
+        cur -= datetime.timedelta(days=1)
+
+
+def validate_settled_close(
+    settled_close: Any,
+    expected_ticker: str,
+    expected_session_date: Optional[str] = None,
+) -> Tuple[bool, Optional[str], Optional[float]]:
+    """Validate settled_close input dictionary.
+
+    Returns: (is_valid, reason, close_price)
+    """
+    if settled_close is None:
+        return False, "missing_settled_close", None
+    if not isinstance(settled_close, dict):
+        return False, "invalid_settled_close_format", None
+
+    # Synthetic / dummy row exclusion (e.g. forward-filled bars from ghost_prescreen_v2)
+    if settled_close.get("synthetic") is True or settled_close.get("is_dummy") is True:
+        return False, "synthetic_or_dummy_close_rejected", None
+
+    # Validate close price
+    raw_close = settled_close.get("close")
+    if isinstance(raw_close, bool) or not isinstance(raw_close, (int, float)):
+        return False, "missing_or_nonnumeric_close", None
+    import math
+    if not math.isfinite(raw_close) or raw_close <= 0:
+        return False, "nonpositive_or_nonfinite_close", None
+
+    # Validate ticker identity -- required, not merely checked when present:
+    # a settled_close missing provenance (ticker/source/retrieved_ts_utc) is
+    # not distinguishable from one that was never actually resolved against
+    # this position (Astra, 2026-09-19).
+    close_ticker = settled_close.get("ticker")
+    if not close_ticker or not isinstance(close_ticker, str):
+        return False, "missing_ticker", None
+    if str(close_ticker).strip().upper() != str(expected_ticker).strip().upper():
+        return False, f"ticker_mismatch: expected {expected_ticker}, got {close_ticker}", None
+
+    source = settled_close.get("source")
+    if not source or not isinstance(source, str):
+        return False, "missing_source", None
+    retrieved_ts_utc = settled_close.get("retrieved_ts_utc")
+    if not retrieved_ts_utc or not isinstance(retrieved_ts_utc, str):
+        return False, "missing_retrieved_ts_utc", None
+
+    # Validate session_date
+    session_date = settled_close.get("session_date")
+    if not session_date or not isinstance(session_date, str):
+        return False, "missing_or_invalid_session_date", None
+    try:
+        dt = datetime.date.fromisoformat(session_date)
+        if dt.isoformat() != session_date:
+            return False, "invalid_session_date_iso_format", None
+    except (ValueError, TypeError):
+        return False, "invalid_session_date_format", None
+
+    if expected_session_date is not None:
+        # A malformed expected_session_date must fail closed, not silently
+        # skip the freshness check -- the prior `except: pass` let a
+        # 2020-01-02 close validate as fine whenever the caller's own
+        # expected-date computation was itself broken (Astra, 2026-09-19,
+        # reproduced: validate_settled_close(..., expected_session_date=
+        # "malformed") returned valid=True).
+        try:
+            exp_dt = datetime.date.fromisoformat(expected_session_date)
+        except (ValueError, TypeError):
+            return False, "malformed_expected_session_date", None
+        if dt > exp_dt:
+            return False, f"synthetic_or_future_date_rejected: {session_date} > {expected_session_date}", None
+        if dt != exp_dt:
+            return False, f"stale_settled_close: expected {expected_session_date}, got {session_date}", None
+
+    return True, None, float(raw_close)
+
+
 def compute_exit_signal_v2(
     payload: Dict[str, Any],
     exclude_last_bar: bool = False,
@@ -487,6 +593,35 @@ def compute_exit_signal_v2(
 
     stop_mode = "HARD_STRUCTURAL" if regime == "NEGATIVE" else "PREMIUM_MULTIPLE"
 
+    # 1b. Settled close validation for bar-independent structural evaluation
+    has_settled_close = "settled_close" in payload
+    settled_close_raw = payload.get("settled_close") if has_settled_close else None
+    sc_valid = False
+    sc_reason = "missing_settled_close"
+    sc_close: Optional[float] = None
+    sc_breached: Optional[bool] = None
+    sc_unknown = True
+
+    if has_settled_close:
+        expected_session = payload.get("expected_session_date")
+        if expected_session is None:
+            ref_date_str = payload.get("as_of_date") or payload.get("mark_date")
+            expected_session = get_expected_last_completed_session(ref_date_str)
+        sc_valid, sc_reason, sc_close = validate_settled_close(
+            settled_close_raw, ticker, expected_session
+        )
+        if sc_valid:
+            if short_strike is not None:
+                sc_breached = bool(sc_close < short_strike)
+                sc_unknown = False
+            else:
+                sc_breached = None
+                sc_unknown = True
+                sc_reason = "short_strike_missing"
+        else:
+            sc_breached = None
+            sc_unknown = True
+
     # Profit-target, time-stop, AND (in POSITIVE regime) premium_stop all
     # need only credit/pricing/DTE inputs, never price bars -- evaluate them
     # before the bars check so an insufficient-data position (can't compute
@@ -508,9 +643,25 @@ def compute_exit_signal_v2(
         current_mark=current_mark,
     )
     premium_stop_unknown_insufficient = regime == "POSITIVE" and not premium_stop["evaluated"]
-    thesis_invalidated_insufficient = (
-        regime == "POSITIVE" and premium_stop["evaluated"] and bool(premium_stop["triggered"])
-    )
+
+    # In POSITIVE regime, premium_stop is the hard gate (bar-independent).
+    # In NEGATIVE regime, structural breach against settled_close is evaluable
+    # without bars if settled_close was supplied.
+    thesis_invalidated_by_insufficient: Optional[str] = None
+    if regime == "POSITIVE":
+        thesis_invalidated_insufficient = (
+            premium_stop["evaluated"] and bool(premium_stop["triggered"])
+        )
+        if thesis_invalidated_insufficient:
+            thesis_invalidated_by_insufficient = "premium_stop"
+    else:  # NEGATIVE regime
+        if has_settled_close and sc_valid:
+            thesis_invalidated_insufficient = bool(sc_breached)
+            if thesis_invalidated_insufficient:
+                thesis_invalidated_by_insufficient = "structural_breach"
+        else:
+            # Missing/stale/invalid settled close: structural check is UNKNOWN
+            thesis_invalidated_insufficient = False
 
     # 2. Extract and sanitize OHLCV bars
     bars = payload["bars"] if "bars" in payload else bars_from_parallel_arrays(payload)
@@ -523,7 +674,7 @@ def compute_exit_signal_v2(
             or bool(profit_target.get("triggered"))
             or bool(time_stop.get("triggered"))
         )
-        return {
+        res_insufficient: Dict[str, Any] = {
             "ticker": ticker,
             "insufficient_data": True,
             "settled": exclude_last_bar,
@@ -534,17 +685,24 @@ def compute_exit_signal_v2(
             "stop_mode": stop_mode,
             "premium_stop": premium_stop,
             "premium_stop_unknown": premium_stop_unknown_insufficient,
-            # thesis_invalidated: in NEGATIVE regime this needs bars (short
-            # strike breach against settled close) and stays False here
-            # (unmeasured, not verified intact). In POSITIVE regime it's
-            # exactly premium_stop's own triggered state -- no bars needed.
-            # hard_close can be True via any of the three bar-independent
-            # triggers evaluated above.
             "profit_target": profit_target,
             "time_stop": time_stop,
             "hard_close": hard_close_insufficient,
             "thesis_invalidated": thesis_invalidated_insufficient,
         }
+        # Additive only: new keys appear only when caller opted into settled_close
+        if has_settled_close:
+            res_insufficient["thesis_invalidated_by"] = thesis_invalidated_by_insufficient
+            res_insufficient["structural_evaluation"] = {
+                "evaluated": sc_valid,
+                "session_date": settled_close_raw.get("session_date") if isinstance(settled_close_raw, dict) else None,
+                "close": sc_close if sc_valid else None,
+                "short_strike": short_strike,
+                "breached": sc_breached,
+                "unknown": sc_unknown,
+                "reason": sc_reason,
+            }
+        return res_insufficient
 
     closes = [float(b["close"]) for b in bars]
 
@@ -561,25 +719,35 @@ def compute_exit_signal_v2(
 
     # 5. Regime-gated thesis_invalidated decision
     premium_stop_unknown = False
+    thesis_invalidated_by: Optional[str] = None
     if regime == "NEGATIVE":
         # Strict regime: short strike breach is the hard structural stop
-        thesis_invalidated = bool(checks["short_strike_breached"])
+        if has_settled_close and sc_valid:
+            thesis_invalidated = bool(sc_breached)
+        else:
+            # Legacy bars path or fallback when settled_close invalid/missing
+            thesis_invalidated = bool(checks["short_strike_breached"])
+
+        # PRECEDENCE DECISION:
+        # In NEGATIVE regime (stop_mode="HARD_STRUCTURAL"), if both a structural breach
+        # (close < short strike) and a premium-multiple stop (current_loss > 2x credit)
+        # are true simultaneously, structural breach takes precedence ('structural_breach').
+        # Rationale: Structural breach is the defining hard stop of the NEGATIVE regime,
+        # designed to halt positions experiencing gamma amplification during crash/stress
+        # conditions. Premium-multiple stop is POSITIVE regime's peacetime mechanism.
+        if thesis_invalidated:
+            thesis_invalidated_by = "structural_breach"
     else:
         # Relaxed regime: short strike breach alone does NOT invalidate thesis.
         # Must breach the 2.0x credit mark-to-market loss threshold.
         if premium_stop["evaluated"]:
             thesis_invalidated = bool(premium_stop["triggered"])
         else:
-            # Missing MTM data in relaxed mode (no unrealized_pnl/current_mark,
-            # or an invalid initial_credit): falls through without
-            # invalidating thesis, same as before -- but that "False" is a
-            # default, not a verified-safe read, and nothing previously
-            # surfaced the distinction. premium_stop_unknown makes it
-            # explicit so a caller can route it to manual review instead of
-            # silently trusting an unmeasured "intact" (CodeRabbit finding,
-            # 2026-09-15 -- same fail-safe pattern as short_strike_unknown).
             thesis_invalidated = False
             premium_stop_unknown = True
+
+        if thesis_invalidated:
+            thesis_invalidated_by = "premium_stop"
 
     # 6. Profit target & Time stop already evaluated above (bar-independent).
 
@@ -595,7 +763,7 @@ def compute_exit_signal_v2(
         or bool(time_stop.get("triggered"))
     )
 
-    return {
+    res_full: Dict[str, Any] = {
         "ticker": ticker,
         "insufficient_data": False,
         "settled": exclude_last_bar,
@@ -614,6 +782,19 @@ def compute_exit_signal_v2(
         "thesis_invalidated": thesis_invalidated,
         "note": "proxy signal v2 (regime-aware) — draft for human review",
     }
+    # Additive only: new keys appear only when caller opted into settled_close
+    if has_settled_close:
+        res_full["thesis_invalidated_by"] = thesis_invalidated_by
+        res_full["structural_evaluation"] = {
+            "evaluated": sc_valid,
+            "session_date": settled_close_raw.get("session_date") if isinstance(settled_close_raw, dict) else None,
+            "close": sc_close if sc_valid else None,
+            "short_strike": short_strike,
+            "breached": sc_breached,
+            "unknown": sc_unknown,
+            "reason": sc_reason,
+        }
+    return res_full
 
 
 def run_self_tests() -> None:
@@ -948,9 +1129,159 @@ def run_self_tests() -> None:
         print(f"[FAIL] (h) Expected thesis_invalidated=True via premium_stop despite insufficient_data, got: {res_h}")
         failures += 1
 
+    # -------------------------------------------------------------------------
+    # Test (i): settled_close in NEGATIVE regime evaluates structural breach
+    # independent of MIN_BARS (bars=[]) -- thesis_invalidated=True,
+    # thesis_invalidated_by="structural_breach", hard_close=True.
+    # -------------------------------------------------------------------------
+    payload_i = {
+        "ticker": "TEST_I",
+        "short_strike": 100.0,
+        "initial_credit": 1.00,
+        "entry_date": "2026-05-01",
+        "as_of_date": "2026-09-18",
+        "expected_session_date": "2026-09-17",
+        "current_mark": 1.00,
+        "gex_regime": neg_regime_dict,
+        "bars": [],
+        "settled_close": {
+            "ticker": "TEST_I",
+            "close": 95.0,  # 95 < 100 -> breached!
+            "session_date": "2026-09-17",
+            "source": "yfinance",
+            "retrieved_ts_utc": "2026-09-18T12:00:00Z",
+        },
+    }
+    res_i = compute_exit_signal_v2(payload_i)
+    cond_i = (
+        res_i["insufficient_data"] is True
+        and res_i["thesis_invalidated"] is True
+        and res_i["thesis_invalidated_by"] == "structural_breach"
+        and res_i["hard_close"] is True
+        and res_i["structural_evaluation"]["evaluated"] is True
+        and res_i["structural_evaluation"]["breached"] is True
+        and res_i["structural_evaluation"]["unknown"] is False
+    )
+    if cond_i:
+        print("[PASS] (i) settled_close in NEGATIVE regime evaluates structural breach independent of MIN_BARS")
+    else:
+        print(f"[FAIL] (i) Expected structural breach via settled_close, got: {res_i}")
+        failures += 1
+
+    # -------------------------------------------------------------------------
+    # Test (j): Stale or dummy settled_close -> structural result UNKNOWN, not False, not True
+    # -------------------------------------------------------------------------
+    payload_j_stale = {
+        "ticker": "TEST_J",
+        "short_strike": 100.0,
+        "initial_credit": 1.00,
+        "entry_date": "2026-05-01",
+        "expected_session_date": "2026-09-17",
+        "gex_regime": neg_regime_dict,
+        "bars": [],
+        "settled_close": {
+            "ticker": "TEST_J",
+            "close": 95.0,
+            "session_date": "2026-09-10",  # STALE
+            "source": "yfinance",
+            "retrieved_ts_utc": "2026-09-17T12:00:00Z",
+        },
+    }
+    res_j = compute_exit_signal_v2(payload_j_stale)
+    cond_j = (
+        res_j["structural_evaluation"]["evaluated"] is False
+        and res_j["structural_evaluation"]["unknown"] is True
+        and res_j["structural_evaluation"]["breached"] is None
+        and res_j["thesis_invalidated"] is False
+        and "stale_settled_close" in res_j["structural_evaluation"]["reason"]
+    )
+    if cond_j:
+        print("[PASS] (j) Stale settled_close results in structural evaluation explicitly UNKNOWN")
+    else:
+        print(f"[FAIL] (j) Expected UNKNOWN on stale settled_close, got: {res_j}")
+        failures += 1
+
+    # -------------------------------------------------------------------------
+    # Test (k): Precedence rule in NEGATIVE regime -- if both structural breach
+    # AND premium multiple stop trigger, structural breach takes precedence.
+    # -------------------------------------------------------------------------
+    payload_k = {
+        "ticker": "TEST_K",
+        "short_strike": 100.0,
+        "initial_credit": 1.00,
+        "entry_date": "2026-05-01",
+        "expected_session_date": "2026-09-17",
+        "current_mark": 4.00,  # loss = 3.00 > 2.0 * 1.00 -> premium_stop triggered
+        "gex_regime": neg_regime_dict,
+        "bars": [],
+        "settled_close": {
+            "ticker": "TEST_K",
+            "close": 95.0,  # close < short_strike -> structural breach triggered
+            "session_date": "2026-09-17",
+            "source": "yfinance",
+            "retrieved_ts_utc": "2026-09-17T12:00:00Z",
+        },
+    }
+    res_k = compute_exit_signal_v2(payload_k)
+    cond_k = (
+        res_k["premium_stop"]["triggered"] is True
+        and res_k["structural_evaluation"]["breached"] is True
+        and res_k["thesis_invalidated"] is True
+        and res_k["thesis_invalidated_by"] == "structural_breach"
+    )
+    if cond_k:
+        print("[PASS] (k) NEGATIVE regime precedence: structural breach takes precedence over premium stop")
+    else:
+        print(f"[FAIL] (k) Expected structural_breach precedence in NEGATIVE regime, got: {res_k}")
+        failures += 1
+
+    # -------------------------------------------------------------------------
+    # Test (l): a malformed expected_session_date must fail validation closed,
+    # never silently skip the freshness check (Astra, 2026-09-19 -- reproduced
+    # a 2020-01-02 close validating as fine when the caller's own expected-date
+    # computation was itself broken).
+    # -------------------------------------------------------------------------
+    l_valid, l_reason, l_close = validate_settled_close(
+        {"ticker": "TEST_L", "close": 95.0, "session_date": "2020-01-02",
+         "source": "yfinance", "retrieved_ts_utc": "2026-09-17T12:00:00Z"},
+        "TEST_L",
+        "malformed",
+    )
+    cond_l = l_valid is False and l_reason == "malformed_expected_session_date" and l_close is None
+    if cond_l:
+        print("[PASS] (l) Malformed expected_session_date fails validation closed")
+    else:
+        print(f"[FAIL] (l) Expected fail-closed on malformed expected_session_date, got: "
+              f"valid={l_valid} reason={l_reason} close={l_close}")
+        failures += 1
+
+    # -------------------------------------------------------------------------
+    # Test (m): settled_close missing provenance (ticker/source/retrieved_ts_utc)
+    # is rejected, not silently accepted (Astra, 2026-09-19).
+    # -------------------------------------------------------------------------
+    m_cases = [
+        ({"close": 100.0, "session_date": "2026-09-18", "source": "yfinance",
+          "retrieved_ts_utc": "2026-09-17T12:00:00Z"}, "missing_ticker"),
+        ({"ticker": "TEST_M", "close": 100.0, "session_date": "2026-09-18",
+          "retrieved_ts_utc": "2026-09-17T12:00:00Z"}, "missing_source"),
+        ({"ticker": "TEST_M", "close": 100.0, "session_date": "2026-09-18",
+          "source": "yfinance"}, "missing_retrieved_ts_utc"),
+    ]
+    cond_m = True
+    for sc, expected_reason in m_cases:
+        valid, reason, close = validate_settled_close(sc, "TEST_M", "2026-09-18")
+        if not (valid is False and reason == expected_reason and close is None):
+            cond_m = False
+            print(f"[FAIL] (m) case missing field for reason={expected_reason}: "
+                  f"got valid={valid} reason={reason} close={close}")
+    if cond_m:
+        print("[PASS] (m) settled_close missing provenance (ticker/source/retrieved_ts_utc) rejected")
+    else:
+        failures += 1
+
     print("--------------------------------------------------")
     if failures == 0:
-        print("ALL ASSERTIONS PASSED (8/8)")
+        print("ALL ASSERTIONS PASSED (13/13)")
     else:
         print(f"FAILED: {failures} assertion(s) failed.")
         sys.exit(1)

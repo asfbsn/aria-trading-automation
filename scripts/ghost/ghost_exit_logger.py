@@ -42,16 +42,31 @@ from scripts.ghost.ghost_fill_logger import (
 )
 from scripts.compute_exit_signal_v2 import compute_exit_signal_v2
 
+# Structural-evidence fields (Astra, 2026-09-19): without these, a `marked`
+# row with no breach is indistinguishable from one where the structural check
+# was never measured at all -- "verified intact" and "UNKNOWN" collapse into
+# the same on-disk row. Persisted on every mark/exit row, not just computed.
+STRUCTURAL_FIELDS = '''thesis_invalidated_by structural_evaluated structural_breached
+structural_unknown structural_reason settled_close_used settled_close_session_date
+settled_close_source settled_close_retrieved_ts_utc'''.split()
 MARK_FIELDS = '''run_id mark_date candidate_id ticker dte short_mid long_mid
 cost_to_close_mid cost_to_close_natural displayed_crossing_cost_per_leg_close
 unrealized_pnl_mid pct_max_profit_captured regime regime_data_available
-premium_stop_triggered profit_target_triggered time_stop_triggered
-code_version_hash git_head git_dirty'''.split()
+premium_stop_triggered profit_target_triggered time_stop_triggered''' \
+    .split() + STRUCTURAL_FIELDS + '''code_version_hash git_head git_dirty'''.split()
 EXIT_FIELDS = '''run_id exit_date candidate_id ticker trade_date dte_at_exit
 exit_reason credit_mid cost_to_close_mid cost_to_close_natural
 displayed_crossing_cost_per_leg_close realized_pnl_mid pct_max_profit_captured
-regime regime_data_available code_version_hash git_head git_dirty'''.split()
-RAW_MARK_FIELDS = '''run_id candidate_id mark_date ts_utc outcome reason input_json'''.split()
+regime regime_data_available''' \
+    .split() + STRUCTURAL_FIELDS + '''code_version_hash git_head git_dirty'''.split()
+# effective_settled_close_json: the settled_close dict actually used for this
+# observation, post-fallback-file-substitution -- distinct from input_json,
+# which stays exactly the caller's original bytes. The mark prompt never puts
+# settled_close in its own JSON (it comes from state/ghost/settled_closes.json
+# inside log_observation()), so without this field the raw audit trail never
+# captures what evidence a verdict was actually based on (Astra, 2026-09-19).
+RAW_MARK_FIELDS = '''run_id candidate_id mark_date ts_utc outcome reason
+effective_settled_close_json input_json'''.split()
 
 
 def ensure_header(path, fields):
@@ -108,6 +123,9 @@ def exit_reason(signal):
     if signal['profit_target']['triggered']:
         return 'profit_target'
     if signal['thesis_invalidated']:
+        by = signal.get('thesis_invalidated_by')
+        if by in ('structural_breach', 'premium_stop'):
+            return by
         return 'premium_stop'
     raise RuntimeError('hard_close without a recognized exit trigger')
 
@@ -130,6 +148,7 @@ def log_observation(raw_bytes, state_dir, holiday_text):
                       if row['candidate_id'] == candidate), None)
         outcome, reason = 'rejected', ''
         result = {'candidate_id': candidate}
+        effective_settled_close_json = ''
         if entry is None:
             reason = 'candidate_not_found_in_entries'
         elif any(row['candidate_id'] == candidate for row in rows(exits)):
@@ -152,17 +171,53 @@ def log_observation(raw_bytes, state_dir, holiday_text):
                               displayed_crossing_cost_per_leg_close=(natural - mid) / 2,
                               credit_mid=credit, unrealized_pnl_mid=pnl,
                               pct_max_profit_captured=pnl / credit, dte=dte)
-                # bars=[] always takes insufficient_data: profit/time stops and
-                # POSITIVE premium stop work; NEGATIVE structural stop needs
-                # settled OHLCV and is unmeasured. No get_price_history grant.
-                # Never copy caller overrides; real runs resolve GEX live.
-                signal = compute_exit_signal_v2({
+
+                # Distinct timestamps:
+                # 1. Settled close timestamp & session date: evidence from the last
+                #    completed trading session (yesterday's close, e.g. via fetch_settled_closes.py),
+                #    used for the lagged structural short-strike breach check.
+                # 2. Quote timestamps (short_quote_ts_utc, long_quote_ts_utc): today's
+                #    live hypothetical-exit quote capture during RTH via get_price_snapshot,
+                #    used for mark-to-market valuation (current_mark, pct_max_profit_captured).
+                # These timestamps serve two distinct purposes and are never conflated into
+                # a single 'as of' timestamp.
+                settled_close = data.get('settled_close')
+                if settled_close is None:
+                    sc_file = state_dir / 'settled_closes.json'
+                    if sc_file.exists():
+                        try:
+                            sc_map = json.loads(sc_file.read_text(encoding='utf-8'))
+                            if isinstance(sc_map, dict):
+                                settled_close = sc_map.get(entry['ticker'])
+                        except Exception:
+                            settled_close = None
+
+                signal_payload = {
                     'ticker': entry['ticker'], 'bars': [], 'initial_credit': credit,
-                    'entry_date': entry['trade_date'], 'contracts': 1,
-                    'current_mark': mid, 'dte': dte,
+                    'entry_date': entry['trade_date'], 'mark_date': data['mark_date'],
+                    'contracts': 1, 'current_mark': mid, 'dte': dte,
                     'short_strike': float(entry['resolved_short_strike']),
-                })
-                row = {**data, **values, 'ticker': entry['ticker'],
+                    'settled_close': settled_close,
+                }
+                signal = compute_exit_signal_v2(signal_payload)
+                effective_settled_close_json = json.dumps(settled_close) if settled_close is not None else ''
+                # Persist the structural evidence itself, not just its effect on
+                # hard_close/exit_reason -- otherwise a `marked` row with no
+                # breach can't later be told apart from one where the structural
+                # check was never measured at all (Astra, 2026-09-19).
+                struct_eval = signal.get('structural_evaluation') or {}
+                structural_row = {
+                    'thesis_invalidated_by': signal.get('thesis_invalidated_by'),
+                    'structural_evaluated': struct_eval.get('evaluated'),
+                    'structural_breached': struct_eval.get('breached'),
+                    'structural_unknown': struct_eval.get('unknown'),
+                    'structural_reason': struct_eval.get('reason'),
+                    'settled_close_used': struct_eval.get('close'),
+                    'settled_close_session_date': struct_eval.get('session_date'),
+                    'settled_close_source': settled_close.get('source') if isinstance(settled_close, dict) else None,
+                    'settled_close_retrieved_ts_utc': settled_close.get('retrieved_ts_utc') if isinstance(settled_close, dict) else None,
+                }
+                row = {**data, **values, **structural_row, 'ticker': entry['ticker'],
                        'regime': signal['regime'],
                        'regime_data_available': signal['regime_detail']['data_available']}
                 result.update(hard_close=signal['hard_close'], signal=signal)
@@ -180,7 +235,9 @@ def log_observation(raw_bytes, state_dir, holiday_text):
                     append(marks, MARK_FIELDS, row)
                     outcome = 'marked'
         append(raw, RAW_MARK_FIELDS, {**data, 'ts_utc': datetime.now(timezone.utc).isoformat(),
-               'outcome': outcome, 'reason': reason, 'input_json': raw_bytes.decode('utf-8')})
+               'outcome': outcome, 'reason': reason,
+               'effective_settled_close_json': effective_settled_close_json,
+               'input_json': raw_bytes.decode('utf-8')})
         return {**result, 'outcome': outcome, 'reason': reason}
 
 
@@ -362,6 +419,214 @@ def self_test():
                 raise AssertionError('schema mismatch did not raise')
             assert (state / 'ghost_marks.csv').read_text() == 'wrong,header\n'
 
+        def fixture_1_negative_structural_breach(state):
+            sc = {'ticker': 'TEST', 'close': 95.0, 'session_date': '2026-09-16',
+                  'source': 'yfinance', 'retrieved_ts_utc': '2026-09-17T12:00:00Z'}
+            result = record(state, {**base, 'settled_close': sc})
+            assert result['outcome'] == 'exited'
+            assert result['hard_close'] is True
+            assert result['exit_reason'] == 'structural_breach'
+            assert result['signal']['structural_evaluation']['evaluated'] is True
+            assert result['signal']['structural_evaluation']['breached'] is True
+            assert result['signal']['structural_evaluation']['unknown'] is False
+            assert result['signal']['thesis_invalidated_by'] == 'structural_breach'
+            exits = rows(state / 'ghost_exits.csv')
+            assert len(exits) == 1
+            assert exits[0]['exit_reason'] == 'structural_breach'
+            # Persisted row, not just the in-memory signal -- this is the actual
+            # gap Astra flagged: a computed-but-not-persisted verdict is
+            # unrecoverable the moment the process exits (Astra, 2026-09-19).
+            assert exits[0]['thesis_invalidated_by'] == 'structural_breach'
+            assert exits[0]['structural_evaluated'] == 'True'
+            assert exits[0]['structural_breached'] == 'True'
+            assert exits[0]['structural_unknown'] == 'False'
+            assert math.isclose(float(exits[0]['settled_close_used']), 95.0, abs_tol=1e-9)
+            assert exits[0]['settled_close_session_date'] == '2026-09-16'
+            assert exits[0]['settled_close_source'] == 'yfinance'
+            assert exits[0]['settled_close_retrieved_ts_utc'] == '2026-09-17T12:00:00Z'
+            raw_obs = rows(state / 'ghost_mark_observations_raw.csv')
+            assert raw_obs[-1]['effective_settled_close_json'] == json.dumps(sc)
+
+        def fixture_2_gex_unavailable_fallback(state):
+            sc = {'ticker': 'TEST', 'close': 95.0, 'session_date': '2026-09-16',
+                  'source': 'yfinance', 'retrieved_ts_utc': '2026-09-17T12:00:00Z'}
+            result = record(state, {**base, 'settled_close': sc})
+            assert result['signal']['regime'] == 'NEGATIVE'
+            assert result['signal']['regime_detail']['data_available'] is False
+            assert result['outcome'] == 'exited'
+            assert result['exit_reason'] == 'structural_breach'
+
+        def fixture_3_stale_settled_close_unknown(state):
+            sc = {'ticker': 'TEST', 'close': 95.0, 'session_date': '2026-09-10',
+                  'source': 'yfinance', 'retrieved_ts_utc': '2026-09-17T12:00:00Z'}
+            result = record(state, {**base, 'settled_close': sc})
+            assert result['outcome'] == 'marked'
+            assert result['hard_close'] is False
+            assert result['signal']['structural_evaluation']['evaluated'] is False
+            assert result['signal']['structural_evaluation']['unknown'] is True
+            assert result['signal']['structural_evaluation']['breached'] is None
+            assert 'stale_settled_close' in result['signal']['structural_evaluation']['reason']
+
+        def fixture_4_missing_settled_close_unknown(state):
+            result = record(state, {**base, 'settled_close': None})
+            assert result['outcome'] == 'marked'
+            assert result['hard_close'] is False
+            assert result['signal']['structural_evaluation']['unknown'] is True
+            assert result['signal']['structural_evaluation']['breached'] is None
+            assert result['signal']['structural_evaluation']['evaluated'] is False
+            # Persisted, not just computed: the marked row must record UNKNOWN
+            # explicitly, never leave the structural columns blank in a way
+            # that could later be misread as "verified intact."
+            marks = rows(state / 'ghost_marks.csv')
+            assert marks[-1]['structural_unknown'] == 'True'
+            assert marks[-1]['structural_evaluated'] == 'False'
+            assert marks[-1]['structural_breached'] == ''
+            assert marks[-1]['structural_reason'] == 'missing_settled_close'
+            assert marks[-1]['thesis_invalidated_by'] == ''
+            pt_res = record(state, {**base, 'mark_date': '2026-09-18',
+                                    'short_quote_ts_utc': '2026-09-18T14:00:00Z',
+                                    'long_quote_ts_utc': '2026-09-18T14:00:02Z',
+                                    'short_bid': 1.2, 'short_ask': 1.4, 'settled_close': None})
+            assert pt_res['outcome'] == 'exited'
+            assert pt_res['exit_reason'] == 'profit_target'
+
+        def fixture_5_synthetic_forward_fill_rejected(state):
+            sc = {'ticker': 'TEST', 'close': 95.0, 'session_date': '2026-09-18',
+                  'source': 'yfinance', 'synthetic': True}
+            result = record(state, {**base, 'settled_close': sc})
+            assert result['outcome'] == 'marked'
+            assert result['hard_close'] is False
+            assert result['signal']['structural_evaluation']['unknown'] is True
+            assert result['signal']['structural_evaluation']['breached'] is None
+            assert result['signal']['structural_evaluation']['evaluated'] is False
+
+        def fixture_6_byte_identical_exit_guard_v2(state):
+            # Frozen expected output, not `git show HEAD:...` (Astra, 2026-09-19:
+            # once this file is committed, HEAD becomes the NEW version, and a
+            # HEAD-relative comparison silently degrades into comparing the code
+            # against itself -- testing nothing while still printing PASS).
+            # Regenerate this literal only via a deliberate, reviewed update, the
+            # same discipline as any other frozen fixture in this codebase.
+            bars = []
+            for i in range(160):
+                c = 100.0 if i < 159 else 95.0
+                bars.append({
+                    'date': f'2026-01-{(i%28)+1:02d}',
+                    'open': c + 0.5, 'high': c + 1.0, 'low': c - 1.0, 'close': c, 'volume': 1000
+                })
+            eg_payload = {
+                'ticker': 'AAPL', 'short_strike': 100.0, 'initial_credit': 1.00,
+                'entry_date': '2026-05-01', 'contracts': 1, 'unrealized_pnl': -250.0,
+                'current_mark': None,
+                'gex_regime': {
+                    'as_of_date': '2026-06-10', 'gex_date': '2026-06-09', 'gex': 5.5e9,
+                    'percentile_rank': 0.45, 'regime': 'POSITIVE', 'lookback_used': 252,
+                    'data_available': True, 'staleness_days': 1
+                },
+                'bars': bars
+            }
+            expected = {
+                "checks": {
+                    "bearish_candle": False, "broke_ma150_support": True,
+                    "candle_pattern": "none", "premium_stop_triggered": True,
+                    "premium_stop_unknown": False, "profit_target_triggered": False,
+                    "rsi_overbought": False, "short_strike_breached": True,
+                    "short_strike_unknown": False, "time_stop_triggered": False,
+                    "volume_confirmed_breakdown": False,
+                },
+                "close": 95.0, "hard_close": True, "insufficient_data": False,
+                "ma150": 99.93,
+                "note": "proxy signal v2 (regime-aware) — draft for human review",
+                "premium_stop": {"current_loss": 2.5, "evaluated": True,
+                                  "threshold": 2.0, "triggered": True},
+                "profit_target": {"evaluated": True, "pct_captured": -2.5,
+                                   "threshold": 0.8, "triggered": False},
+                "regime": "POSITIVE",
+                "regime_detail": {
+                    "as_of_date": "2026-06-10", "data_available": True,
+                    "gex": 5500000000.0, "gex_date": "2026-06-09",
+                    "lookback_used": 252, "percentile_rank": 0.45,
+                    "regime": "POSITIVE", "staleness_days": 1,
+                },
+                "rsi20": 0.0, "settled": False, "short_strike": 100.0,
+                "stop_mode": "PREMIUM_MULTIPLE", "thesis_invalidated": True,
+                "ticker": "AAPL",
+                "time_stop": {"dte": None, "evaluated": False,
+                              "reason": "no_dte_data", "triggered": False},
+            }
+            post_res = compute_exit_signal_v2(eg_payload)
+            post_json = json.dumps(post_res, sort_keys=True)
+            expected_json = json.dumps(expected, sort_keys=True)
+            assert post_json == expected_json, (
+                f'MISMATCH against frozen baseline.\nGot: {post_json}\nExpected: {expected_json}'
+            )
+            # No settled_close key in eg_payload -- the additive-only keys must
+            # be entirely absent, not present-with-None.
+            assert 'thesis_invalidated_by' not in post_res
+            assert 'structural_evaluation' not in post_res
+
+        def fixture_7_retry_idempotency_settled_close(state):
+            sc = {'ticker': 'TEST', 'close': 105.0, 'session_date': '2026-09-16', 'source': 'yfinance',
+                  'retrieved_ts_utc': '2026-09-17T12:00:00Z'}
+            data = {**base, 'settled_close': sc}
+            res1 = record(state, data)
+            assert res1['outcome'] == 'marked'
+            assert len(rows(state / 'ghost_marks.csv')) == 1
+
+            res2 = record(state, data)
+            assert res2['outcome'] == 'duplicate_skipped'
+            assert res2['reason'] == 'mark_already_recorded_for_date'
+            assert len(rows(state / 'ghost_marks.csv')) == 1
+            assert len(rows(state / 'ghost_exits.csv')) == 0
+
+        def fixture_8_full_reconciliation(state):
+            from collections import Counter
+            import re
+            seed(state, candidate='cand_mark', expiry='2026-10-16')
+            seed(state, candidate='cand_breach', expiry='2026-10-16')
+            seed(state, candidate='cand_reject', expiry='2026-10-16')
+
+            expected_ids = {'cand_mark', 'cand_breach', 'cand_reject'}
+
+            sc_healthy = {'ticker': 'TEST', 'close': 105.0, 'session_date': '2026-09-16', 'source': 'yfinance',
+                          'retrieved_ts_utc': '2026-09-17T12:00:00Z'}
+            res_m = record(state, {**base, 'candidate_id': 'cand_mark', 'settled_close': sc_healthy})
+            assert res_m['outcome'] == 'marked'
+
+            sc_breach = {'ticker': 'TEST', 'close': 95.0, 'session_date': '2026-09-16', 'source': 'yfinance',
+                         'retrieved_ts_utc': '2026-09-17T12:00:00Z'}
+            res_b = record(state, {**base, 'candidate_id': 'cand_breach', 'settled_close': sc_breach})
+            assert res_b['outcome'] == 'exited'
+            assert res_b['exit_reason'] == 'structural_breach'
+
+            res_r = record(state, {**base, 'candidate_id': 'cand_reject', 'short_bid': 0, 'settled_close': sc_healthy})
+            assert res_r['outcome'] == 'rejected'
+
+            raw_obs = rows(state / 'ghost_mark_observations_raw.csv')
+            observed_ids = {r['candidate_id'] for r in raw_obs}
+            assert observed_ids == expected_ids
+
+            terminal = {r['candidate_id']: r for r in raw_obs}
+            counts = Counter(r['outcome'] for r in terminal.values())
+            assert counts['marked'] == 1
+            assert counts['exited'] == 1
+            assert counts['rejected'] == 1
+
+            summary_text = f"PROCESSED: {len(terminal)} MARKED: {counts['marked']} EXITED: {counts['exited']}"
+            summary_match = re.fullmatch(r'PROCESSED: (\d+) MARKED: (\d+) EXITED: (\d+)', summary_text)
+            assert summary_match and tuple(map(int, summary_match.groups())) == (3, 1, 1)
+
+        def fixture_precedence_negative_structural_over_premium(state):
+            sc = {'ticker': 'TEST', 'close': 95.0, 'session_date': '2026-09-16', 'source': 'yfinance',
+                  'retrieved_ts_utc': '2026-09-17T12:00:00Z'}
+            data = {**base, 'short_bid': 7.9, 'short_ask': 8.1, 'settled_close': sc}
+            result = record(state, data)
+            assert result['outcome'] == 'exited'
+            assert result['exit_reason'] == 'structural_breach'
+            assert result['signal']['premium_stop']['triggered'] is True
+            assert result['signal']['structural_evaluation']['breached'] is True
+            assert result['signal']['thesis_invalidated_by'] == 'structural_breach'
+
         cases = [
             ('healthy mark arithmetic and offline regime fail-safe', healthy, '2026-10-16'),
             ('profit-target exit', profit, '2026-10-16'),
@@ -388,6 +653,24 @@ def self_test():
             ('schema mismatch fails loudly', header_mismatch, '2026-10-16'),
             ('time stop takes priority over profit target',
                 lambda s: close_case(s, 'time_stop', {**base, 'short_bid': 1.2, 'short_ask': 1.4}), '2026-09-24'),
+            ('fixture 1: NEGATIVE regime structural breach via settled_close',
+                fixture_1_negative_structural_breach, '2026-10-16'),
+            ('fixture 2: GEX-unavailable fallback defaults NEGATIVE and evaluates settled_close',
+                fixture_2_gex_unavailable_fallback, '2026-10-16'),
+            ('fixture 3: Stale settled_close yields explicitly UNKNOWN structural result',
+                fixture_3_stale_settled_close_unknown, '2026-10-16'),
+            ('fixture 4: Missing settled_close yields UNKNOWN structural while profit/time stops work',
+                fixture_4_missing_settled_close_unknown, '2026-10-16'),
+            ('fixture 5: Synthetic/forward-fill dummy close rejected by validation',
+                fixture_5_synthetic_forward_fill_rejected, '2026-10-16'),
+            ('fixture 6: Additive byte-identical output test for exit-guard_v2 payload without settled_close',
+                fixture_6_byte_identical_exit_guard_v2, '2026-10-16'),
+            ('fixture 7: Retry idempotency for settled-close-driven marking path',
+                fixture_7_retry_idempotency_settled_close, '2026-10-16'),
+            ('fixture 8: Full reconciliation covering settled-close structural path and rejections',
+                fixture_8_full_reconciliation, '2026-10-16'),
+            ('fixture precedence: NEGATIVE regime structural breach takes precedence over premium stop',
+                fixture_precedence_negative_structural_over_premium, '2026-10-16'),
         ]
         for leg in ('short', 'long'):
             for label, changes, reason in [
