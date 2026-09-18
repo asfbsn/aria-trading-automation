@@ -122,6 +122,8 @@ For the gating threshold (`z_ma150_proximity_upper_bound = 0.50` only), **on the
 
 **Overall verdict**: `PASS` only if the `n >= 30` short-circuit clears, the primary metric overall is `PASS`, and the non-inferiority overall is `PASS` — five CIs total (Gates A, B, C, D, E), all must clear. `FAIL` if either the primary-metric or non-inferiority overall is `FAIL`. Otherwise `INCONCLUSIVE`.
 
+**Margins frozen at `0.0` (Section 8) — strictness consequence, stated here where the gate logic lives, not only in Section 8:** with `margin_breach = margin_intraperiod = margin_reach = 0.0`, Gates C/D/E's `PASS` condition (`CI upper bound <= margin`) requires the combined arm's deterioration CI to be confidently at or below zero — for two arms with genuinely equal true rates, roughly a 2.5% chance by construction (a 95% two-sided CI's own false-positive rate on one side). **Gates C/D/E therefore `PASS` only when the combined arm is confidently *better*, not merely equal** — at zero margin, a non-inferiority gate functions as a superiority test. `INCONCLUSIVE` on one or more of these gates is the **expected** outcome for genuinely comparable arms, not a sign the design is broken. Per Astra: do not loosen these margins after seeing results.
+
 **Uncertainty method**: 45-day moving/overlapping blocks, entry-date block assignment — same construction as the 09-17 proposal, adapted per Section 5.
 
 **Frozen inference parameters, declared now, before any run (Astra round 3 — required before execution):**
@@ -139,15 +141,21 @@ For the gating threshold (`z_ma150_proximity_upper_bound = 0.50` only), **on the
 
 ---
 
-## 8. Open items — down to margins only; everything else settled (Astra round 3: "Core design now coherent... no further redesign warranted")
+## 8. Margins — frozen (Astra, round 4)
 
-Astra round 3 settled two of round 2's four open items directly: **keep the intraperiod gate** (matches the hypothesis's own stated path-risk framing — adopted, no longer open), and **the 2×2 overlap diagnostic is a required implementation output**, not a decision awaiting permission (Section 4, adopted). What remains, before registration only (implementation does not require these — Section 5's script and fixtures can be built and verified without them):
+**All three margins frozen at `0.0pp` (`0.0` as a fraction — the implementation's unit convention, confirmed against `scripts/backtest/z_ma150_proximity_dit_test.py`'s CLI, where `margin_breach=0.02` means 2pp):**
 
-1. **`margin_breach`** (terminal breach non-inferiority, Gate C) — how many percentage points of terminal-breach-rate deterioration is tolerable in exchange for faster profit capture.
-2. **`margin_intraperiod`** (Gate D) — same question for intraperiod breach, with the added wrinkle that the OOS baseline's intraperiod rate (25.18%) runs about 1.8x its terminal rate (13.96%, both from the 09-17 proposal's own registered OOS baseline output), so a margin equal in absolute percentage points to `margin_breach` is proportionally tighter here. State whether `margin_intraperiod` should equal `margin_breach`, scale with it, or be set independently.
-3. **`margin_reach`** (Gate E, eventual reach) — same question, opposite-direction metric: how many percentage points of eventual-reach-rate shortfall is tolerable.
+| Parameter | Value |
+|---|---:|
+| `margin_breach` | **0.0pp** |
+| `margin_intraperiod` | **0.0pp** |
+| `margin_reach` | **0.0pp** |
 
-No margin value is invented here as a placeholder standing in for review — the implementation's verdict logic must accept all three as explicit parameters with no default, and refuse to compute a real PASS/FAIL/INCONCLUSIVE verdict until all three are supplied.
+**Astra's reasoning, adopted verbatim:** zero tolerated deterioration matches the hypothesis's own original framing — "without increasing risk" — not an empirically estimated tolerance, a research acceptance criterion. **Margins are independent**, not scaled off one another: the intraperiod base rate running ~1.8x the terminal rate (Section 4) does not justify tolerating 1.8x more deterioration there, and the actual comparator throughout is `GEX-only`, not baseline, so the baseline/intraperiod relationship isn't the relevant one anyway. **Positive margins would change the objective itself** — explicitly trading worse breach/reach outcomes for faster capture — which is not what this proposal's hypothesis claims to test.
+
+**Consequence, stated explicitly so a future reader doesn't mistake the intended strictness for a broken design (advisor catch, round 4):** with every margin at `0.0`, each non-inferiority gate's `PASS` condition (`CI upper bound <= margin`) requires the combined arm's CI to be confidently at or below zero deterioration — for two arms with genuinely equal true rates, that has roughly a 2.5% chance by chance alone (the flip side of a 95% two-sided CI). **In practice, Gates C/D/E will `PASS` only if the combined arm is confidently *better*, not merely equal, on each metric** — a non-inferiority gate at zero margin is a superiority test in non-inferiority framing. `INCONCLUSIVE` is the **expected**, not anomalous, outcome for genuinely comparable arms under this design. This is the intended strictness for a Development-track screen under a "without increasing risk" hypothesis, per Astra: **do not loosen the margins after seeing results** if the run comes back `INCONCLUSIVE` on one or more of these gates — that would be exactly the kind of post-hoc threshold selection this codebase's registration discipline exists to prevent.
+
+Registration is unblocked by this freeze. The 2×2 overlap diagnostic (Section 4) remains a required implementation output, already built, not a separate decision.
 
 ## Revision Log
 
@@ -171,3 +179,7 @@ No margin value is invented here as a placeholder standing in for review — the
   5. Astra settled two of round 2's remaining open items directly: intraperiod gate kept (matches the hypothesis's path-risk framing), overlap diagnostic reclassified as a required implementation output, not a permission-gated decision. Section 8 now lists only the three margins.
   6. Added a "Frozen inference parameters" declaration before any run: 95% CI, 10,000 bootstrap repetitions (both inherited from the 09-17 proposal), fresh seed `20260918` (this proposal's own registration date, same convention as the 09-17 proposal's `20260917`) (Section 7).
   7. Per Astra's own framing — "ready for implementation after four bounded corrections; registration still needs margins frozen" — this revision closes the implementation gate. The three margins remain open and gate registration/execution only, not the script build or its fixtures.
+- **2026-09-18, round 4 → round 5 (this revision) — margins frozen (Astra), registration unblocked:**
+  1. All three margins frozen at `0.0pp` (Section 8), per Astra's explicit recommendation: zero tolerated deterioration matches the hypothesis's own "without increasing risk" framing, margins kept independent (the 1.8x intraperiod/terminal base-rate ratio does not justify a scaled margin), positive margins would change the objective rather than measure it.
+  2. Strictness consequence of zero margins — Gates C/D/E function as superiority tests at this setting, `INCONCLUSIVE` is the expected outcome for genuinely comparable arms — stated explicitly in both Section 7 (where the gate logic lives) and Section 8, per an independent advisor catch that this needed to be written down before freezing, not left implicit.
+  3. Confirmed against the implementation's actual CLI (`--margin-breach`/`--margin-intraperiod`/`--margin-reach`, `type=float`, fraction units, `None` default) before writing the frozen values, rather than assuming the unit convention.
