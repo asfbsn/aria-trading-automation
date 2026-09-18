@@ -241,15 +241,37 @@ def log_observation(raw_bytes, state_dir, holiday_text):
         return {**result, 'outcome': outcome, 'reason': reason}
 
 
-def open_candidate_ids(state_dir):
+def is_ready_to_mark(position):
+    """A position is ready to mark only if resolution_status is exact and contract IDs are positive ints."""
+    if position.get('resolution_status') != 'exact':
+        return False
+    for field in ('underlying_contract_id', 'short_contract_id', 'long_contract_id'):
+        val = position.get(field)
+        if val is None or str(val).strip() == '':
+            return False
+        if isinstance(val, bool):
+            return False
+        try:
+            int_val = int(val)
+            if int_val <= 0:
+                return False
+        except (ValueError, TypeError):
+            return False
+    return True
+
+
+def open_candidate_ids(state_dir, ready_to_mark_only=False):
     """Return accepted entry dicts without a terminal exit, including prior marks."""
     state_dir = Path(state_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
     with (state_dir / '.logger.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         exited = {row['candidate_id'] for row in rows(state_dir / 'ghost_exits.csv')}
-        return [row for row in rows(state_dir / 'ghost_entries.csv')
-                if row['candidate_id'] not in exited]
+        candidates = [row for row in rows(state_dir / 'ghost_entries.csv')
+                      if row['candidate_id'] not in exited]
+        if ready_to_mark_only:
+            return [c for c in candidates if is_ready_to_mark(c)]
+        return candidates
 
 
 def self_test():
@@ -691,7 +713,41 @@ def self_test():
                 'quote_date_does_not_match_mark_date'), '2026-10-16'),
             ('invalid mark date rejected', lambda s: reject(s, {'mark_date': 'bad'},
                 'missing_or_invalid_mark_date'), '2026-10-16'),
+            ('fixture 6: entry -> list-open -> mark handoff (contract IDs flow through)',
+                lambda s: test_fixture6_conids_flow_through_list_open(s), '2026-10-16'),
+            ('fixture 8: unresolved row excluded from ready-to-mark set',
+                lambda s: test_fixture8_unresolved_row_handling(s), '2026-10-16'),
         ])
+        def test_fixture6_conids_flow_through_list_open(state):
+            append(state / 'ghost_entries.csv', ENTRY_FIELDS,
+                   dict(candidate_id='conid_pos', ticker='TEST', trade_date='2026-09-16',
+                        credit_mid=2, resolved_expiry='2026-10-16', resolved_short_strike=100,
+                        resolution_status='exact', underlying_contract_id=12345,
+                        short_contract_id=67890, long_contract_id=67891))
+            open_list = open_candidate_ids(state)
+            pos = next((p for p in open_list if p['candidate_id'] == 'conid_pos'), None)
+            assert pos is not None, 'Candidate missing from open list'
+            assert pos['underlying_contract_id'] == '12345'
+            assert pos['short_contract_id'] == '67890'
+            assert pos['long_contract_id'] == '67891'
+            assert int(pos['underlying_contract_id']) == 12345
+            assert int(pos['short_contract_id']) == 67890
+            assert int(pos['long_contract_id']) == 67891
+            assert is_ready_to_mark(pos) is True
+
+        def test_fixture8_unresolved_row_handling(state):
+            append(state / 'ghost_entries.csv', ENTRY_FIELDS,
+                   dict(candidate_id='blocked_pos', ticker='BLOCKED', trade_date='2026-09-16',
+                        credit_mid=2, resolved_expiry='2026-10-16', resolved_short_strike=100,
+                        resolution_status='unresolved_blocked: conid_field_mismatch',
+                        underlying_contract_id='', short_contract_id='', long_contract_id=''))
+            all_open = open_candidate_ids(state)
+            blocked_pos = next((p for p in all_open if p['candidate_id'] == 'blocked_pos'), None)
+            assert blocked_pos is not None
+            assert is_ready_to_mark(blocked_pos) is False
+            ready_set = open_candidate_ids(state, ready_to_mark_only=True)
+            assert not any(p['candidate_id'] == 'blocked_pos' for p in ready_set)
+
         # Exercise the REAL resolver's exception fail-safe without a network
         # attempt. A socket guard also makes accidental network use fail tests.
         with patch('scripts.compute_exit_signal_v2.dix_latest', side_effect=RuntimeError('offline self-test')), \
@@ -715,11 +771,13 @@ def main():
     group.add_argument('--input', type=Path)
     group.add_argument('--self-test', action='store_true')
     group.add_argument('--list-open', action='store_true')
+    parser.add_argument('--ready-to-mark', action='store_true',
+                        help='Filter --list-open to positions ready to mark (with valid contract IDs)')
     args = parser.parse_args()
     if args.self_test:
         return self_test()
     if args.list_open:
-        print(json.dumps(open_candidate_ids(ROOT / 'state/ghost')))
+        print(json.dumps(open_candidate_ids(ROOT / 'state/ghost', ready_to_mark_only=args.ready_to_mark)))
         return 0
     holidays = ROOT / 'us-market-holidays.txt'
     result = log_observation(args.input.read_bytes(), ROOT / 'state/ghost',

@@ -53,7 +53,8 @@ INPUT_FIELDS = '''candidate_id run_id trade_date signal_bar_date mode ticker
 signal_close ma150 vrp_ratio iv_current hv_current iv_as_of_date gex_regime
 gex_percentile gex_data_available gex_as_of z_ma150 filter_tag derived_short_strike derived_long_strike
 derived_expiry resolved_short_strike resolved_long_strike resolved_expiry
-resolution_status underlying_spot short_bid short_ask short_bid_size short_ask_size
+resolution_status underlying_contract_id short_contract_id long_contract_id
+underlying_spot short_bid short_ask short_bid_size short_ask_size
 short_quote_ts_utc long_bid long_ask long_bid_size long_ask_size long_quote_ts_utc
 short_quote_ts_is_estimated long_quote_ts_is_estimated market_data_type in_rth_claimed
 code_version_hash git_head git_dirty'''.split()
@@ -61,6 +62,7 @@ ENTRY_FIELDS = '''run_id quote_ts_utc trade_date signal_bar_date mode ticker can
 in_rth market_data_type signal_close ma150 vrp_ratio iv_current hv_current
 iv_as_of_date gex_regime gex_percentile gex_data_available gex_as_of z_ma150 filter_tag
 resolved_short_strike resolved_long_strike resolved_expiry resolution_status
+underlying_contract_id short_contract_id long_contract_id
 underlying_spot short_bid short_ask short_mid short_bid_size short_ask_size long_bid
 long_ask long_mid long_bid_size long_ask_size short_quote_ts_utc long_quote_ts_utc
 short_quote_ts_is_estimated long_quote_ts_is_estimated quote_skew_seconds
@@ -109,6 +111,8 @@ def validate(data):
         timestamp_error = True
     else:
         timestamp_error = False
+    if data.get('resolution_status') == 'conid_field_mismatch' or data.get('conid_field_mismatch') is True:
+        return values, 'conid_field_mismatch'
     if data.get('resolution_status') != 'exact':
         return values, 'resolution_not_exact'
     for leg in ('short', 'long'):
@@ -116,6 +120,16 @@ def validate(data):
             return values, f'{leg}_strike_not_exact'
     if not data.get('resolved_expiry') or data['resolved_expiry'] != data.get('derived_expiry'):
         return values, 'expiry_not_exact'
+    for conid_field in ('underlying_contract_id', 'short_contract_id', 'long_contract_id'):
+        conid = data.get(conid_field)
+        if conid is None:
+            return values, f'{conid_field}_missing'
+        if isinstance(conid, bool):
+            return values, f'{conid_field}_is_boolean'
+        if not isinstance(conid, int):
+            return values, f'{conid_field}_float_or_fractional'
+        if conid <= 0:
+            return values, f'{conid_field}_nonpositive'
     if timestamp_error:
         return values, 'missing_or_invalid_quote_timestamp'
     if values['quote_skew_seconds'] > QUOTE_SKEW_MAX_SECONDS:
@@ -236,6 +250,7 @@ def self_test():
                 derived_short_strike=100, resolved_short_strike=100,
                 derived_long_strike=95, resolved_long_strike=95,
                 derived_expiry='2026-10-16', resolved_expiry='2026-10-16',
+                underlying_contract_id=123456, short_contract_id=234567, long_contract_id=345678,
                 short_bid=2.0, short_ask=2.2, long_bid=0.9, long_ask=1.1,
                 short_bid_size=3, long_bid_size=2, market_data_type='live',
                 short_quote_ts_utc='2026-09-15T14:00:00Z',
@@ -257,6 +272,12 @@ def self_test():
                 assert math.isclose(float(row[key]), expected, abs_tol=1e-12), key
             assert math.isclose(float(row['z_ma150']), 1.8765, abs_tol=1e-6), 'z_ma150'
             assert row['filter_tag'] == 'gex_positive_z_ma150_ge_1.5', 'filter_tag'
+            assert row['underlying_contract_id'] == '123456'
+            assert row['short_contract_id'] == '234567'
+            assert row['long_contract_id'] == '345678'
+            assert int(row['underlying_contract_id']) == 123456
+            assert int(row['short_contract_id']) == 234567
+            assert int(row['long_contract_id']) == 345678
         def skew():
             # Must exceed QUOTE_SKEW_MAX_SECONDS (15s), not the old 5s bar.
             result = record({**base, 'candidate_id': 'skew', 'long_quote_ts_utc': '2026-09-15T14:00:20Z'})
@@ -307,12 +328,54 @@ def self_test():
             assert first['reason'] == 'missing_or_invalid_candidate_id'
             assert second['outcome'] == 'duplicate_skipped'
             assert second['attempt_n'] == first['attempt_n'] + 1
+        def fixture1_missing_contract_id():
+            # Fixture 1: Missing contract ID (None/absent) is explicitly rejected.
+            payload = {**base, 'candidate_id': 'missing_conid', 'short_contract_id': None}
+            res = record(payload)
+            assert res['outcome'] == 'rejected'
+            assert res['reason'] == 'short_contract_id_missing'
+        def fixture2_mismatched_invalid_contract_ids():
+            # Fixture 2: 4 distinct rejections:
+            # 1. boolean rejected
+            res_bool = record({**base, 'candidate_id': 'bool_conid', 'short_contract_id': True})
+            assert res_bool['outcome'] == 'rejected' and res_bool['reason'] == 'short_contract_id_is_boolean'
+            # 2. float/fractional rejected
+            res_float = record({**base, 'candidate_id': 'float_conid', 'short_contract_id': 12345.67})
+            assert res_float['outcome'] == 'rejected' and res_float['reason'] == 'short_contract_id_float_or_fractional'
+            # 3. non-positive (<=0) rejected
+            res_zero = record({**base, 'candidate_id': 'zero_conid', 'short_contract_id': 0})
+            assert res_zero['outcome'] == 'rejected' and res_zero['reason'] == 'short_contract_id_nonpositive'
+            res_neg = record({**base, 'candidate_id': 'neg_conid', 'short_contract_id': -99})
+            assert res_neg['outcome'] == 'rejected' and res_neg['reason'] == 'short_contract_id_nonpositive'
+            # 4. Item 2 exact-verification rule mismatch rejected
+            res_mismatch = record({**base, 'candidate_id': 'mismatch_conid', 'resolution_status': 'conid_field_mismatch'})
+            assert res_mismatch['outcome'] == 'rejected' and res_mismatch['reason'] == 'conid_field_mismatch'
+        def fixture3_csv_integer_round_trip():
+            # Fixture 3: Real positive integer contract IDs round-trip accurately through CSV.
+            payload = {**base, 'candidate_id': 'roundtrip', 'underlying_contract_id': 987654321,
+                       'short_contract_id': 876543210, 'long_contract_id': 765432109}
+            assert record(payload)['outcome'] == 'accepted'
+            row = [r for r in rows(state / 'ghost_entries.csv') if r['candidate_id'] == 'roundtrip'][0]
+            # Ensure on-disk string representation is plain integer string
+            assert row['underlying_contract_id'] == '987654321'
+            assert row['short_contract_id'] == '876543210'
+            assert row['long_contract_id'] == '765432109'
+            # Must NOT roundtrip as boolean string, float string, or None
+            assert not row['underlying_contract_id'].endswith('.0')
+            assert row['underlying_contract_id'] != 'True'
+            # Type restores cleanly to exact int
+            assert int(row['underlying_contract_id']) == 987654321
+            assert int(row['short_contract_id']) == 876543210
+            assert int(row['long_contract_id']) == 765432109
         for label, check in [('valid arithmetic', valid), ('20-second skew rejected', skew),
                              ('10-second skew accepted under widened threshold', skew_within_widened_threshold),
                              ('no exact match', resolution), ('idempotency', duplicate),
                              ('missing market_data_type', missing_live),
                              ('estimated timestamp still accepts', estimated_timestamp),
-                             ('repeated malformed candidate_id does not crash', repeated_malformed_candidate_id)]:
+                             ('repeated malformed candidate_id does not crash', repeated_malformed_candidate_id),
+                             ('fixture 1: missing contract ID rejected', fixture1_missing_contract_id),
+                             ('fixture 2: mismatched/invalid contract ID rejected (4 distinct cases)', fixture2_mismatched_invalid_contract_ids),
+                             ('fixture 3: CSV integer round-trip', fixture3_csv_integer_round_trip)]:
             try:
                 check()
                 print(f'PASS: {label}')

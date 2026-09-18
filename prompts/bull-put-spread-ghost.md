@@ -28,19 +28,33 @@ Copy mode and signal_bar_date from the prescreen envelope when absent on an item
 
 ## Per-Candidate Processing Flow
 1. Resolve the underlying with `search_contracts` if its contract id is absent.
-   Confirm ticker identity. Call `get_price_snapshot` on that underlying and
-   record underlying_spot from its response. If unavailable, use null.
+   Confirm ticker identity. Capture `underlying_contract_id` as the positive
+   integer contract ID from the response (never a ticker string). Call
+   `get_price_snapshot` on that underlying contract ID and record underlying_spot
+   from its response. If unavailable, use null.
 2. Call `get_option_parameters` for that underlying's real listed expirations.
 3. Call `get_option_data` bounded around derived_long_strike and
    derived_short_strike, for derived_expiry. Confirm both exact listed PUT
    strikes and the exact expiry, including each leg's underlying identity.
+   Cross-check each contract's own returned fields: right=PUT, strike
+   (matches resolved_short_strike/resolved_long_strike exactly), expiry
+   (matches resolved_expiry exactly), currency=USD, multiplier=100.
+   If the returned contract's own fields do not match what was already
+   verified for strike/expiry (or right!=PUT, currency!=USD, multiplier!=100),
+   that ID must NOT be accepted: set resolution_status=`conid_field_mismatch`
+   and all contract IDs null (never silently accepted).
    Normalize date formatting only; never change the date or strike value.
    If expiry is not listed, do not query a substitute expiration. If either
    leg/expiry cannot be verified, set resolution_status=`no_exact_match` and
-   ALL three resolved fields null. Still write JSON and call the logger.
-4. For an exact match, set resolution_status=`exact` and copy the actual listed
-   strikes/expiry into resolved fields. Call `get_price_snapshot` on the short
-   PUT contract id, then separately on the long PUT contract id. Request
+   ALL three resolved fields and all three contract IDs null. Still write JSON
+   and call the logger.
+4. For an exact match with verified contract fields, set resolution_status=`exact`
+   and copy the actual listed strikes/expiry into resolved fields, and copy the
+   verified positive integer contract IDs into `underlying_contract_id`,
+   `short_contract_id`, and `long_contract_id`. Validate contract IDs as positive
+   integers: reject booleans, reject floats/fractionals, reject non-positive values.
+   Call `get_price_snapshot` on the short PUT contract id, then separately on the
+   long PUT contract id. Request
    `market_data_names: ["bid_ask", "option_open_interest", "top_status"]`
    and quote sizes through the tool's supported fields — `top_status` is the
    actual field that carries live/delayed/frozen status (confirmed
@@ -108,6 +122,9 @@ Copy mode and signal_bar_date from the prescreen envelope when absent on an item
   "resolved_long_strike": null,
   "resolved_expiry": null,
   "resolution_status": "no_exact_match",
+  "underlying_contract_id": null,
+  "short_contract_id": null,
+  "long_contract_id": null,
   "underlying_spot": null,
   "short_bid": null,
   "short_ask": null,

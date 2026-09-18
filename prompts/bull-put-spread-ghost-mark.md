@@ -29,14 +29,19 @@ Otherwise, process EVERY item in the array, in its existing order. No strike red
   EXISTING, already-resolved position.
 
 ## Per-Position Processing Flow
-1. Call `get_price_snapshot` on the underlying symbol to confirm underlying identity
-   and record `underlying_spot` from its response. If unavailable, use null.
-2. Call `get_price_snapshot` on the SHORT PUT contract using the position's OWN
-   `resolved_short_strike` and `resolved_expiry` from the open-positions entry.
+1. Verify the position carries valid positive integer contract IDs (`underlying_contract_id`,
+   `short_contract_id`, `long_contract_id`) and `resolution_status == "exact"`.
+   Positions missing contract IDs or marked unresolved/blocked cannot be quoted via
+   `get_price_snapshot` — skip quoting them.
+2. Call `get_price_snapshot` on the underlying contract using the position's OWN
+   integer `underlying_contract_id` from the open-positions entry. Record `underlying_spot`
+   from its response. If unavailable, use null.
+3. Call `get_price_snapshot` on the SHORT PUT contract using the position's OWN
+   integer `short_contract_id` from the open-positions entry.
    Then separately call `get_price_snapshot` on the LONG PUT contract using the
-   position's OWN `resolved_long_strike` and `resolved_expiry` from the open-positions
-   entry. Never re-resolve or re-derive strikes; never call `get_option_data` or
-   `get_option_parameters`.
+   position's OWN integer `long_contract_id` from the open-positions entry.
+   Never re-resolve or re-derive strikes; never call `search_contracts`, `get_option_data`,
+   or `get_option_parameters`.
    Request `market_data_names: ["bid_ask", "option_open_interest", "top_status"]`
    and quote sizes through the tool's supported fields — `top_status` is the
    actual field that carries live/delayed/frozen status (confirmed
@@ -62,13 +67,13 @@ Otherwise, process EVERY item in the array, in its existing order. No strike red
    mixed/unknown data must retain that status or null. Never infer live
    status from plausible prices, and never set `live` just because
    `top_status` was absent from the response — absent is unknown, not live.
-3. Using Write (covered by the scoped Edit grant), write the full object below
+4. Using Write (covered by the scoped Edit grant), write the full object below
    to `$ARIA_HOME/state/scratch/ghost_mark_<TICKER>_<candidate_id>.json`. Preserve candidate/
    position values; use envelope/wrapper metadata as specified. `mark_date` is
    SCAN_DATE (today, America/New_York), NOT the position's original trade_date.
    No omitted keys. Unknown quote data stays null.
    in_rth_claimed is your claim or null; the logger independently computes RTH.
-4. Immediately run Bash:
+5. Immediately run Bash:
    `scripts/backtest/.venv/bin/python3 scripts/ghost/ghost_exit_logger.py --input state/scratch/ghost_mark_<TICKER>_<candidate_id>.json`
    (or `$ARIA_HOME/scripts/backtest/.venv/bin/python3 $ARIA_HOME/scripts/ghost/ghost_exit_logger.py --input $ARIA_HOME/state/scratch/ghost_mark_<TICKER>_<candidate_id>.json`).
    Use its returned outcome (`marked`/`exited`/`rejected`/`duplicate_skipped`) as authoritative.
