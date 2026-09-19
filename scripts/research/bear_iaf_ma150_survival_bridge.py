@@ -374,15 +374,20 @@ def main():
                     w_current_outcomes.append(held)
                     pooled_current_outcomes.append(held)
 
-                # conf_curr (7-of-7) implies conf_s23 (structural + >=2-of-3
-                # confirm) -- current is a strict subset of s23. Counting a
-                # signal in BOTH pools would make the two-proportion test
-                # compare a group against itself-plus-extra, violating the
-                # test's independence assumption (CodeRabbit finding,
-                # 2026-08-31). Only count the INCREMENTAL signals s23 adds
-                # beyond current -- this is also the more decision-relevant
-                # comparison: does loosening the gate's own new signals hold
-                # up, not a self-referential one.
+                # current and s23 are NOT nested (CodeRabbit finding,
+                # 2026-09-19, correcting the 2026-08-31 comment this
+                # replaces): current's BEAR_DEFAULT_GATE_KEYS never requires
+                # near_ma50_rejection, but s23's min_structural=4 requires ALL
+                # four BEAR_STRUCTURAL_KEYS including it -- so current=True
+                # does NOT imply s23=True. They're two independent,
+                # overlapping tiers, not one a strict superset of the other.
+                # Counting an overlap signal in BOTH pools would still violate
+                # the two-proportion test's independence assumption, so it's
+                # counted only once, in the `conf_curr` pool above -- this
+                # block only takes s23-only signals, keeping the two pools
+                # disjoint. This is a "signals the loosened s23 tier accepts
+                # that the current gate doesn't" comparison, not an
+                # "incremental signals added on top of current" one.
                 if conf_s23 and not conf_curr:
                     w_s23_signals += 1
                     w_s23_held += held

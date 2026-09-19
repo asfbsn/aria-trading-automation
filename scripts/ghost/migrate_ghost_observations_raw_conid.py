@@ -76,27 +76,38 @@ def migrate_raw(raw_path: Path, as_of_date: str = None) -> int:
                 f"but does not match full RAW_FIELDS. Manual intervention required."
             )
 
-        bak_path = find_backup_path(raw_path, as_of_date=as_of_date)
-        raw_path.rename(bak_path)
-        print(f"[MIGRATE] Archived old-schema file -> {bak_path}")
-
-        with bak_path.open('r', newline='', encoding='utf-8') as handle:
+        with raw_path.open('r', newline='', encoding='utf-8') as handle:
             old_reader = csv.DictReader(handle)
             old_rows = list(old_reader)
 
         tmp_path = raw_path.with_suffix(raw_path.suffix + f".tmp{os.getpid()}")
-        with tmp_path.open('w', newline='', encoding='utf-8') as handle:
-            writer = csv.DictWriter(handle, fieldnames=RAW_FIELDS)
-            writer.writeheader()
-            for row in old_rows:
-                migrated_row = dict(row)
-                for field in CONID_FIELDS:
-                    migrated_row[field] = ''
-                writer.writerow(migrated_row)
-            handle.flush()
-            os.fsync(handle.fileno())
+        bak_path = None
+        archived = False
+        try:
+            with tmp_path.open('w', newline='', encoding='utf-8') as handle:
+                writer = csv.DictWriter(handle, fieldnames=RAW_FIELDS)
+                writer.writeheader()
+                for row in old_rows:
+                    migrated_row = dict(row)
+                    for field in CONID_FIELDS:
+                        migrated_row[field] = ''
+                    writer.writerow(migrated_row)
+                handle.flush()
+                os.fsync(handle.fileno())
 
-        os.replace(tmp_path, raw_path)
+            bak_path = find_backup_path(raw_path, as_of_date=as_of_date)
+            raw_path.rename(bak_path)
+            archived = True
+            print(f"[MIGRATE] Archived old-schema file -> {bak_path}")
+
+            os.replace(tmp_path, raw_path)
+        except Exception:
+            if archived and not raw_path.exists() and bak_path is not None and bak_path.exists():
+                bak_path.rename(raw_path)
+            if tmp_path.exists():
+                tmp_path.unlink()
+            raise
+
         print(f"[MIGRATE] Migrated {len(old_rows)} rows forward to new schema at {raw_path}.")
         return 0
 
