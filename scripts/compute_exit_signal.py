@@ -36,7 +36,7 @@ from signal_core import (
     bars_from_parallel_arrays,
     exit_checks,
     rsi_series,
-    sma,
+    ema,
 )
 
 RSI_LENGTH = 20
@@ -79,7 +79,7 @@ def main():
     rsis = rsi_series(closes, RSI_LENGTH)
     rsi_now = rsis[-1]
 
-    ma150 = sma(closes, 150)
+    ma150 = ema(closes, 150)
 
     checks, thesis_invalidated = exit_checks(closes, bars, short_strike, rsis=rsis)
 

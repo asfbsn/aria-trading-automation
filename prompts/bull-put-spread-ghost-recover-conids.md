@@ -16,9 +16,15 @@ Otherwise, process EVERY such row, in its existing order. One candidate at a tim
 
 ## Per-Row Resolution Flow
 For each candidate row requiring recovery:
-1. Resolve the underlying with `search_contracts` if `underlying_contract_id` is missing.
-   Confirm ticker identity against the row's `ticker`. Capture `underlying_contract_id` as the
-   positive integer contract ID from the response (never a ticker string).
+1. Resolve the underlying with `search_contracts` for the row's `ticker` (even if `underlying_contract_id` is already present).
+   Confirm ticker identity against the row's `ticker` and obtain the positive integer contract ID from the response (never a ticker string):
+   - If `underlying_contract_id` is missing: capture it from the response.
+   - If `underlying_contract_id` is already present: confirm it matches the resolved contract ID exactly.
+     If it does NOT match:
+     - Set `resolution_status: "unresolved_blocked: conid_field_mismatch"`
+     - Leave `underlying_contract_id`, `short_contract_id`, `long_contract_id` as null.
+     - Document the specific mismatch in `reason` (e.g. "underlying contract ID mismatch").
+     - Stop processing this row.
 2. Call `get_option_parameters` for that underlying's real listed expirations if needed.
 3. Call `get_option_data` bounded around the row's `resolved_short_strike` and `resolved_long_strike`,
    for `resolved_expiry`. Confirm both listed PUT strikes and the exact expiry.

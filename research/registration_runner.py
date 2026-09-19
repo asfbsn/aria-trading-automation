@@ -334,6 +334,9 @@ class RegistrationRunner:
         except KeyboardInterrupt:
             self.handle_signal(signal.SIGINT, None)
             return 130
+        except Exception:
+            self.record_terminal_event("failed", exit_code="")
+            raise
         finally:
             try:
                 signal.signal(signal.SIGINT, old_sigint)
@@ -348,6 +351,24 @@ class RegistrationRunner:
 def self_test() -> int:
     """Run hermetic self-test suite in an isolated temporary directory."""
     failures = 0
+
+    def test_wrapped_self_test():
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory(prefix="runner-test-") as temp_dir:
+            temp_research = Path(temp_dir)
+            prop = temp_research / "prop.md"
+            prop.write_text("# Proposal\nValid content")
+            cmd = [sys.executable, "-c", "import sys; sys.exit(7)", "--self-test"]
+            with patch.dict(main.__globals__, {
+                "DEFAULT_RESEARCH_DIR": temp_research,
+                "self_test": lambda: 99,
+            }):
+                ec = main(["--proposal", str(prop), "--", *cmd])
+            assert ec == 7, f"Expected wrapped command exit code 7, got {ec}"
+            r = read_rows(temp_research / "runs.csv")
+            assert [row["event_type"] for row in r] == ["registered", "failed"]
+            assert r[0]["command"] == shlex.join(cmd)
 
     def test_missing_proposal():
         with tempfile.TemporaryDirectory(prefix="runner-test-") as temp_dir:
@@ -598,6 +619,7 @@ def self_test() -> int:
             assert "ERR_TEE_TEST" in content
 
     checks = [
+        ("wrapped self-test flag runs wrapped command", test_wrapped_self_test),
         ("missing proposal path refuses", test_missing_proposal),
         ("empty proposal file refuses", test_empty_proposal),
         ("whitespace-only proposal file refuses", test_whitespace_proposal),
@@ -635,7 +657,15 @@ def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
 
-    if "--self-test" in argv:
+    if "--" in argv:
+        sep_idx = argv.index("--")
+        runner_argv = argv[:sep_idx]
+        cmd = argv[sep_idx + 1 :]
+    else:
+        runner_argv = argv
+        cmd = []
+
+    if "--self-test" in runner_argv:
         return self_test()
 
     parser = argparse.ArgumentParser(
@@ -653,14 +683,6 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Run hermetic self-test suite and exit",
     )
-
-    if "--" in argv:
-        sep_idx = argv.index("--")
-        runner_argv = argv[:sep_idx]
-        cmd = argv[sep_idx + 1 :]
-    else:
-        runner_argv = argv
-        cmd = []
 
     try:
         args = parser.parse_args(runner_argv)

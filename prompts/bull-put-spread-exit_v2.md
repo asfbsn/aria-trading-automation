@@ -126,9 +126,6 @@ under strict crash-insurance rules or relaxed peacetime rules:
    of unpaired/ambiguous option legs, always emitted — 0 when there are none —
    so the wrapper can detect the marker's absence as a report-parsing gap
    rather than silently reading "no unpaired legs."
-   and stop (empty of valid spreads is not an error, same as GTC guard — the
-   final marker line is still required so the wrapper recognizes this as a
-   successful run, not a failure).
 
 2. **Compute technical exit signal (v2):** For each open position pair:
    - `search_contracts` (security_type STK) on the underlying symbol → resolve

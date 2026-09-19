@@ -18,7 +18,7 @@ import yfinance as yf
 
 BASE = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE.parent))
-from signal_core import sma, rsi_series, candle_pattern, MA50_BAND, MA150_BAND, MIN_BARS, VOLUME_MA_LENGTH, RSI_THRESHOLD
+from signal_core import sma, ema, rsi_series, candle_pattern, MA50_BAND, MA150_BAND, MIN_BARS, VOLUME_MA_LENGTH, RSI_THRESHOLD
 
 UNIVERSE_CSV = BASE.parent.parent / "data" / "universe.csv"
 START = "2023-07-26"
@@ -86,7 +86,7 @@ for label, cfg in VARIANTS.items():
 
             close = closes[i]
             ma50 = sma(closes[: i + 1], 50)
-            ma150 = sma(closes[: i + 1], 150)
+            ma150 = ema(closes[: i + 1], 150)
             vol_ma20 = sma(volumes[: i + 1], VOLUME_MA_LENGTH)
             rsi_now = rsis[i]
             rsi_prev2 = rsis[i - 2] if i >= 2 else None

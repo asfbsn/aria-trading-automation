@@ -98,7 +98,7 @@ class BearCallSpreadSignalEngine:
 
                 # Strike math: short strike sits ABOVE MA150 resistance and
                 # above close, rounded up to nearest $5; width $10 wide.
-                short_strike = math.ceil(ma150 / 5.0) * 5.0
+                short_strike = (math.floor(ma150 / 5.0) + 1) * 5.0
                 if short_strike <= close:
                     # Recompute from max(ma150, close), not ma150 alone: both
                     # wired tiers require below_ma150 (close < ma150) so this

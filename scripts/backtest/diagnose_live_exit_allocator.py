@@ -18,19 +18,22 @@ CACHE = BASE / "price_data_cache.pkl"
 
 
 def get_price_data(all_entries):
-    if CACHE.exists():
-        print("Loading cached price data...")
-        with open(CACHE, "rb") as f:
-            return pickle.load(f)
     all_tickers = sorted(set().union(*[set(df["code"]) for df in all_entries.values()]))
     min_date = min(df["entry_date"].min() for df in all_entries.values() if len(df))
     max_date = max(df["expiry"].max() for df in all_entries.values() if len(df))
     start = (min_date - pd.Timedelta(days=250)).strftime("%Y-%m-%d")
     end = (max_date + pd.Timedelta(days=5)).strftime("%Y-%m-%d")
+    metadata = {"tickers": all_tickers, "start": start, "end": end}
+    if CACHE.exists():
+        with open(CACHE, "rb") as f:
+            cached = pickle.load(f)
+        if cached.get("metadata") == metadata:
+            print("Loading cached price data...")
+            return cached["price_data"]
     print(f"Fetching price data for {len(all_tickers)} tickers...")
     price_data = fetch_price_data(all_tickers, start, end)
     with open(CACHE, "wb") as f:
-        pickle.dump(price_data, f)
+        pickle.dump({"metadata": metadata, "price_data": price_data}, f)
     return price_data
 
 

@@ -66,6 +66,11 @@ def stock_quantity(positions, symbol):
     return total
 
 
+def _magnitude(position):
+    quantity = position.get('position') if position is not None else None
+    return abs(quantity) if isinstance(quantity, (int, float)) else 0.0
+
+
 def detect(fresh_positions, baseline_positions):
     """Returns a list of EARLY_ASSIGNMENT_DETECTED marker strings (possibly empty).
 
@@ -106,7 +111,7 @@ def detect(fresh_positions, baseline_positions):
             contract_id = position.get('contract_id')
             baseline_qty = abs(position.get('position', 0))
             fresh_match = fresh_by_id.get(contract_id)
-            fresh_qty = abs(fresh_match.get('position', 0)) if fresh_match is not None else 0.0
+            fresh_qty = _magnitude(fresh_match)
             this_removed = max(0.0, baseline_qty - fresh_qty)
             if this_removed > 0:
                 removed_qty += this_removed

@@ -37,12 +37,86 @@ sys.path.insert(0, str(SCRIPTS_DIR))
 
 import signal_core  # noqa: E402
 from signal_core import (  # noqa: E402
+    CONFIRM_KEYS,
+    DEFAULT_GATE_KEYS,
+    MA50_BAND,
+    MA150_BAND,
     MIN_BARS,
     RSI_LENGTH,
-    entry_checks,
+    RSI_THRESHOLD,
+    STRUCTURAL_KEYS,
+    VOLUME_MA_LENGTH,
+    candle_pattern,
     rsi_series,
-    ema,
 )
+
+
+def ema_series(values: List[float], length: int) -> List[float | None]:
+    """Incremental Exponential Moving Average, one value per bar (None where undefined)."""
+    out: List[float | None] = [None] * len(values)
+    if len(values) < length:
+        return out
+    e = sum(values[:length]) / length
+    out[length - 1] = e
+    k = 2.0 / (length + 1)
+    for i in range(length, len(values)):
+        e = values[i] * k + e * (1 - k)
+        out[i] = e
+    return out
+
+
+def sma_series(values: List[float], length: int) -> List[float | None]:
+    """Rolling Simple Moving Average, one value per bar (None where undefined)."""
+    out: List[float | None] = [None] * len(values)
+    if len(values) < length:
+        return out
+    for i in range(length - 1, len(values)):
+        out[i] = sum(values[i - length + 1 : i + 1]) / length
+    return out
+
+
+def evaluate_entry(
+    close: float,
+    volume: float,
+    bar: Dict[str, Any],
+    prev_bar: Dict[str, Any] | None,
+    rsi_now: float | None,
+    rsi_prev: float | None,
+    ma50: float | None,
+    ma150: float | None,
+    vol_ma20: float | None,
+) -> Tuple[bool, bool]:
+    """Evaluate entry gates (current 7-of-7 and structural 2-of-3) for a single bar.
+
+    Reuses signal_core's exact key sets, bands, thresholds, and candle pattern logic
+    with precomputed O(1) indicators instead of O(n) prefix rescans.
+    Returns (conf_curr, conf_s23).
+    """
+    below_ma50_pct = (ma50 - close) / ma50 if ma50 else None
+    above_ma150_pct = (close - ma150) / ma150 if ma150 else None
+
+    checks = {
+        "above_ma150": ma150 is not None and close > ma150,
+        "rsi_below_50": rsi_now is not None and rsi_now < RSI_THRESHOLD,
+        "rsi_rising": (rsi_now is not None and rsi_prev is not None and rsi_now > rsi_prev),
+        "near_ma50_pullback": (below_ma50_pct is not None and MA50_BAND[0] <= below_ma50_pct <= MA50_BAND[1]),
+        "near_ma150_support": (above_ma150_pct is not None and MA150_BAND[0] <= above_ma150_pct <= MA150_BAND[1]),
+        "volume_above_avg": vol_ma20 is not None and volume > vol_ma20,
+    }
+    pattern = candle_pattern(
+        bar["open"], bar["high"], bar["low"], bar["close"],
+        prev_bar["open"] if prev_bar is not None else None,
+        prev_bar["close"] if prev_bar is not None else None,
+    )
+    checks["bullish_candle"] = pattern != "none"
+    checks["candle_pattern"] = pattern
+
+    conf_curr = all(checks[k] for k in DEFAULT_GATE_KEYS)
+    struct_passed = sum(1 for k in STRUCTURAL_KEYS if checks.get(k, False)) >= 4
+    conf_passed = sum(1 for k in CONFIRM_KEYS if checks.get(k, False)) >= 2
+    conf_s23 = struct_passed and conf_passed
+
+    return conf_curr, conf_s23
 
 
 def load_universe_tickers(universe_path: Path) -> List[str]:
@@ -80,7 +154,15 @@ def fetch_historical_data(
 
 def extract_ticker_data(
     df: pd.DataFrame, ticker: str, total_tickers: int
-) -> Tuple[List[Dict[str, Any]], List[float], List[float], List[float]] | None:
+) -> Tuple[
+    List[Dict[str, Any]],
+    List[float],
+    List[float],
+    List[float | None],
+    List[float | None],
+    List[float | None],
+    List[float | None],
+] | None:
     """Extract and validate clean bar history for a single ticker."""
     if isinstance(df.columns, pd.MultiIndex):
         if ticker not in df.columns.levels[0]:
@@ -126,8 +208,11 @@ def extract_ticker_data(
     closes = [b["close"] for b in bars]
     volumes = [b["volume"] for b in bars]
     rsis = rsi_series(closes, RSI_LENGTH)
+    ema150s = ema_series(closes, 150)
+    sma50s = sma_series(closes, 50)
+    vol_ma20s = sma_series(volumes, VOLUME_MA_LENGTH)
 
-    return bars, closes, volumes, rsis
+    return bars, closes, volumes, rsis, ema150s, sma50s, vol_ma20s
 
 
 def run_permutation_test(
@@ -279,7 +364,18 @@ def main():
     # 2. Extract & Precompute Indicators per Ticker
     print("Precomputing indicators (MA50/SMA, MA150/EMA, Wilder RSI, candle patterns)...")
     prep_t0 = time.time()
-    ticker_data_map: Dict[str, Tuple[List[Dict[str, Any]], List[float], List[float], List[float]]] = {}
+    ticker_data_map: Dict[
+        str,
+        Tuple[
+            List[Dict[str, Any]],
+            List[float],
+            List[float],
+            List[float | None],
+            List[float | None],
+            List[float | None],
+            List[float | None],
+        ],
+    ] = {}
     failed_tickers: List[str] = []
 
     for t in tickers:
@@ -316,80 +412,76 @@ def main():
     eval_t0 = time.time()
     forward_days = args.forward_days
 
-    # Structures to record signals
-    # Per window stats: {window_idx: {"current": [outcomes], "structural_2of3": [outcomes], "meta": dict}}
-    window_results: List[Dict[str, Any]] = []
-
-    pooled_current_outcomes: List[int] = []
-    pooled_s23_outcomes: List[int] = []
-
+    # Pre-parse window date boundaries and initialize per-window accumulators
+    window_entries: List[Dict[str, Any]] = []
     for w_idx, win in enumerate(iaf_windows):
         test_range: BacktestDateRange = win["test_range"]
         w_start_ts = pd.Timestamp(test_range.start_date).tz_localize(None)
         w_end_ts = pd.Timestamp(test_range.end_date).tz_localize(None)
         w_name = test_range.name or f"window_{w_idx+1}"
+        window_entries.append({
+            "window_idx": w_idx + 1,
+            "name": w_name,
+            "start": w_start_ts.strftime("%Y-%m-%d"),
+            "end": w_end_ts.strftime("%Y-%m-%d"),
+            "start_ts": w_start_ts,
+            "end_ts": w_end_ts,
+            "current_signals": 0,
+            "current_survived": 0,
+            "current_outcomes": [],
+            "s23_signals": 0,
+            "s23_survived": 0,
+            "s23_outcomes": [],
+        })
 
-        w_current_signals = 0
-        w_current_survived = 0
-        w_current_outcomes: List[int] = []
+    overall_start = min(w["start_ts"] for w in window_entries) if window_entries else None
+    overall_end = max(w["end_ts"] for w in window_entries) if window_entries else None
 
-        w_s23_signals = 0
-        w_s23_survived = 0
-        w_s23_outcomes: List[int] = []
+    # Single pass over each (ticker, bar) across all windows
+    for ticker, (bars, closes, volumes, rsis, ema150s, sma50s, vol_ma20s) in ticker_data_map.items():
+        n_bars = len(bars)
+        for i in range(MIN_BARS - 1, n_bars):
+            bar_ts = bars[i]["timestamp"]
+            if overall_start is None or bar_ts < overall_start or bar_ts >= overall_end:
+                continue
+            if i + forward_days >= n_bars:
+                continue
 
-        for ticker, (bars, closes, volumes, rsis) in ticker_data_map.items():
-            n_bars = len(bars)
-            for i in range(MIN_BARS - 1, n_bars):
-                bar_ts = bars[i]["timestamp"]
-                # Must be within this test window
-                if not (w_start_ts <= bar_ts < w_end_ts):
-                    continue
+            matching_windows = [w for w in window_entries if w["start_ts"] <= bar_ts < w["end_ts"]]
+            if not matching_windows:
+                continue
 
-                # Must have at least `forward_days` bars after signal day
-                if i + forward_days >= n_bars:
-                    continue
+            conf_curr, conf_s23 = evaluate_entry(
+                close=closes[i],
+                volume=volumes[i],
+                bar=bars[i],
+                prev_bar=bars[i - 1],
+                rsi_now=rsis[i],
+                rsi_prev=rsis[i - 1] if i >= 1 else None,
+                ma50=sma50s[i],
+                ma150=ema150s[i],
+                vol_ma20=vol_ma20s[i],
+            )
 
-                bars_slice = [bars[i - 1], bars[i]]
+            if not conf_curr and not conf_s23:
+                continue
 
-                # Current gate (7-of-7)
-                _, conf_curr = entry_checks(
-                    closes[: i + 1],
-                    volumes[: i + 1],
-                    bars_slice,
-                    rsis=rsis[: i + 1],
-                    min_structural=None,
-                    min_confirm=None,
-                )
+            # Signal day MA150 (held fixed over the forward 30-day window)
+            signal_ema150 = ema150s[i]
+            if signal_ema150 is None:
+                continue
 
-                # Structural 2-of-3 gate
-                _, conf_s23 = entry_checks(
-                    closes[: i + 1],
-                    volumes[: i + 1],
-                    bars_slice,
-                    rsis=rsis[: i + 1],
-                    min_structural=4,
-                    min_confirm=2,
-                )
+            # 30 trading days forward closes
+            forward_closes = closes[i + 1 : i + 1 + forward_days]
+            # Survived if close NEVER fell below signal_ema150
+            min_fwd_close = min(forward_closes)
+            survived = int(min_fwd_close >= signal_ema150)
 
-                if not conf_curr and not conf_s23:
-                    continue
-
-                # Signal day MA150 (held fixed over the forward 30-day window)
-                signal_ema150 = ema(closes[: i + 1], 150)
-                if signal_ema150 is None:
-                    continue
-
-                # 30 trading days forward closes
-                forward_closes = closes[i + 1 : i + 1 + forward_days]
-                # Survived if close NEVER fell below signal_ema150
-                min_fwd_close = min(forward_closes)
-                survived = int(min_fwd_close >= signal_ema150)
-
+            for w in matching_windows:
                 if conf_curr:
-                    w_current_signals += 1
-                    w_current_survived += survived
-                    w_current_outcomes.append(survived)
-                    pooled_current_outcomes.append(survived)
+                    w["current_signals"] += 1
+                    w["current_survived"] += survived
+                    w["current_outcomes"].append(survived)
 
                 # current and s23 are NOT nested (CodeRabbit finding,
                 # 2026-09-15): current's DEFAULT_GATE_KEYS never requires
@@ -409,27 +501,39 @@ def main():
                 # comparison, not an "incremental signals added on top of
                 # current" one.
                 if conf_s23 and not conf_curr:
-                    w_s23_signals += 1
-                    w_s23_survived += survived
-                    w_s23_outcomes.append(survived)
-                    pooled_s23_outcomes.append(survived)
+                    w["s23_signals"] += 1
+                    w["s23_survived"] += survived
+                    w["s23_outcomes"].append(survived)
 
-        curr_rate = (w_current_survived / w_current_signals * 100.0) if w_current_signals > 0 else 0.0
-        s23_rate = (w_s23_survived / w_s23_signals * 100.0) if w_s23_signals > 0 else 0.0
+    # Reconstruct window_results and pooled outcomes preserving window order
+    window_results: List[Dict[str, Any]] = []
+    pooled_current_outcomes: List[int] = []
+    pooled_s23_outcomes: List[int] = []
+
+    for w in window_entries:
+        curr_signals = w["current_signals"]
+        curr_survived = w["current_survived"]
+        s23_signals = w["s23_signals"]
+        s23_survived = w["s23_survived"]
+
+        curr_rate = (curr_survived / curr_signals * 100.0) if curr_signals > 0 else 0.0
+        s23_rate = (s23_survived / s23_signals * 100.0) if s23_signals > 0 else 0.0
 
         window_results.append({
-            "window_idx": w_idx + 1,
-            "name": w_name,
-            "start": w_start_ts.strftime("%Y-%m-%d"),
-            "end": w_end_ts.strftime("%Y-%m-%d"),
-            "current_signals": w_current_signals,
-            "current_survived": w_current_survived,
+            "window_idx": w["window_idx"],
+            "name": w["name"],
+            "start": w["start"],
+            "end": w["end"],
+            "current_signals": curr_signals,
+            "current_survived": curr_survived,
             "current_rate": curr_rate,
-            "s23_signals": w_s23_signals,
-            "s23_survived": w_s23_survived,
+            "s23_signals": s23_signals,
+            "s23_survived": s23_survived,
             "s23_rate": s23_rate,
             "rate_diff_pp": curr_rate - s23_rate,
         })
+        pooled_current_outcomes.extend(w["current_outcomes"])
+        pooled_s23_outcomes.extend(w["s23_outcomes"])
 
     eval_time = time.time() - eval_t0
 

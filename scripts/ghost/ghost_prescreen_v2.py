@@ -15,6 +15,7 @@ import math
 from pathlib import Path
 import pickle
 import random
+import re
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 import uuid
@@ -57,7 +58,21 @@ FILTER_TAG = "gex_positive_z_ma150_ge_1.5"
 #      like-for-like population for re-deriving the backtest's P&L numbers.
 
 
-def get_last_completed_session(as_of: Optional[datetime.date] = None) -> datetime.date:
+def load_holidays(path: Path) -> set[str]:
+    """Load holiday dates from us-market-holidays.txt (YYYY-MM-DD lines)."""
+    if not path.exists():
+        return set()
+    return {
+        line.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", line.strip())
+    }
+
+
+def get_last_completed_session(
+    as_of: Optional[datetime.date] = None,
+    holidays: Optional[set[str]] = None,
+) -> datetime.date:
     """Derive the most recent completed trading session before as_of date.
 
     (i.e. yesterday relative to when this script runs, or the most recent session
@@ -65,8 +80,10 @@ def get_last_completed_session(as_of: Optional[datetime.date] = None) -> datetim
     """
     if as_of is None:
         as_of = datetime.datetime.now(ZoneInfo("America/New_York")).date()
+    if holidays is None:
+        holidays = set()
     cur = as_of - datetime.timedelta(days=1)
-    while cur.weekday() >= 5:  # 5=Saturday, 6=Sunday
+    while cur.weekday() >= 5 or cur.isoformat() in holidays:  # 5=Saturday, 6=Sunday
         cur -= datetime.timedelta(days=1)
     return cur
 
@@ -465,7 +482,8 @@ def main() -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     # 1. Determine last completed trading session
-    last_session = get_last_completed_session(today_ny)
+    holidays = load_holidays(REPO_ROOT / "us-market-holidays.txt")
+    last_session = get_last_completed_session(today_ny, holidays=holidays)
     last_session_str = last_session.strftime("%Y-%m-%d")
     print(f"ghost_prescreen_v2: today={today_ny_str}, signal_bar_date={last_session_str}, mode={args.mode}")
 

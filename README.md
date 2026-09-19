@@ -178,10 +178,10 @@ tickers to surface them at the top of that day's report. It auto-expires (date-g
 
 ## Operational notes / gotchas
 - The machine must be powered on at 19:00; cron can't wake a sleeping box (the watchdog flags it).
-- `data/universe.csv` goes stale slowly (market-cap band is wide, Russell 1000 only
-  reconstitutes semi-annually) — refresh every 1–3 months with
-  `python3 scripts/refresh_universe.py`, and update its `RUSSELL_1000_TOTAL_MKTCAP`
-  constant from FTSE Russell's latest published reconstitution figure first.
+- `data/universe.csv` goes stale slowly (market-cap band is wide, Russell 3000 only
+  reconstitutes annually) — refresh every 1–3 months with
+  `python3 scripts/refresh_universe.py` (per-ticker market caps are fetched live via
+  yfinance, no manual constant to update first).
 - **Known open issue (2026-08-26): headless cron runs still don't see the IBKR
   connector** — every cron log 08-11 → 08-25 is an abort or empty header, while
   interactive sessions attach IBKR fine. Until root-caused, run scans from an

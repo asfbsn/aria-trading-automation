@@ -6,6 +6,7 @@ set -Eeuo pipefail
 export PATH="$HOME/.local/bin:$HOME/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 export ARIA_HOME="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 [ ! -f "$ARIA_HOME/.env" ] || source "$ARIA_HOME/.env"
+export TYPESAFE_API_KEY="${TYPESAFE_API_KEY:-}"
 # Fix paths and grants after local configuration has loaded.
 export ARIA_HOME="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 LOG_DIR="$ARIA_HOME/logs"
@@ -15,13 +16,17 @@ LOCK_FILE="$STATE_DIR/daily-scan-ghost-mark.lock"
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-4-8}"
 readonly GHOST_MARK_ALLOWED_TOOLS="\
-Read(/${ARIA_HOME}/state/scratch/ghost_open_positions_*.json),\
-Edit(/${ARIA_HOME}/state/scratch/ghost_mark_*.json),\
+Read(${ARIA_HOME}/state/scratch/ghost_open_positions_*.json),\
+Edit(${ARIA_HOME}/state/scratch/ghost_mark_*.json),\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_price_snapshot,\
 Bash(${ARIA_HOME}/scripts/backtest/.venv/bin/python3 ${ARIA_HOME}/scripts/ghost/ghost_exit_logger.py --input:*),\
 Bash(${ARIA_HOME}/scripts/backtest/.venv/bin/python3 scripts/ghost/ghost_exit_logger.py --input:*),\
 Bash(scripts/backtest/.venv/bin/python3 ${ARIA_HOME}/scripts/ghost/ghost_exit_logger.py --input:*),\
-Bash(scripts/backtest/.venv/bin/python3 scripts/ghost/ghost_exit_logger.py --input:*)"
+Bash(scripts/backtest/.venv/bin/python3 scripts/ghost/ghost_exit_logger.py --input:*),\
+Bash(${ARIA_HOME}/scripts/backtest/.venv/bin/python3 ${ARIA_HOME}/scripts/ghost/jev_shadow_classify.py:*),\
+Bash(${ARIA_HOME}/scripts/backtest/.venv/bin/python3 scripts/ghost/jev_shadow_classify.py:*),\
+Bash(scripts/backtest/.venv/bin/python3 ${ARIA_HOME}/scripts/ghost/jev_shadow_classify.py:*),\
+Bash(scripts/backtest/.venv/bin/python3 scripts/ghost/jev_shadow_classify.py:*)"
 
 notify() {
   command -v notify-send >/dev/null 2>&1 && notify-send -a "ARIA Ghost System" "$1" "${2:-}" || true
@@ -128,7 +133,7 @@ assert isinstance(data, list), 'Open positions must be a JSON array'
 print(f"ghost_mark_{uuid.uuid4().hex[:8]}_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}")
 PY
 )"
-RAW_BASELINE="$(python3 - <<'PY'
+RAW_BASELINE="$("$ARIA_HOME/scripts/backtest/.venv/bin/python3" - <<'PY'
 from scripts.ghost.ghost_exit_logger import ROOT, rows
 print(len(rows(ROOT / 'state/ghost/ghost_mark_observations_raw.csv')))
 PY
@@ -172,7 +177,7 @@ if [ "$CLAUDE_EC" -ne 0 ]; then
 fi
 
 # Success requires actual observations for every candidate, not only model text.
-python3 - "$OPEN_POSITIONS_FILE" "$RUN_OUTPUT" "$RAW_BASELINE" "$RUN_ID" <<'PY'
+"$ARIA_HOME/scripts/backtest/.venv/bin/python3" - "$OPEN_POSITIONS_FILE" "$RUN_OUTPUT" "$RAW_BASELINE" "$RUN_ID" <<'PY'
 import json, re, sys
 from collections import Counter
 from pathlib import Path

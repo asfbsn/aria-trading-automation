@@ -615,6 +615,7 @@ def compute_exit_signal_v2(
                 sc_breached = bool(sc_close < short_strike)
                 sc_unknown = False
             else:
+                sc_valid = False
                 sc_breached = None
                 sc_unknown = True
                 sc_reason = "short_strike_missing"
@@ -816,6 +817,9 @@ def run_self_tests() -> None:
       (h) insufficient_data in POSITIVE regime still evaluates premium_stop
           (also bar-independent, that regime's hard gate) and can set
           thesis_invalidated=True, not just hard_close.
+      (n) settled_close with missing short_strike resets sc_valid to False,
+          leaving structural_evaluation unmeasured (evaluated=False,
+          reason="short_strike_missing") and falling back to checks["short_strike_breached"].
     """
     print("=== [compute_exit_signal_v2] Running Self-Tests ===")
     failures = 0
@@ -1279,9 +1283,67 @@ def run_self_tests() -> None:
     else:
         failures += 1
 
+    # -------------------------------------------------------------------------
+    # Test (n): Valid settled_close with missing short_strike resets sc_valid
+    # to False, leaving structural_evaluation unmeasured (evaluated=False,
+    # unknown=True, reason="short_strike_missing") and falling back to the
+    # bars-based checks["short_strike_breached"] instead of silently
+    # defaulting thesis_invalidated to False via bool(None).
+    # -------------------------------------------------------------------------
+    payload_n = {
+        "ticker": "TEST_N",
+        "short_strike": None,
+        "initial_credit": initial_credit,
+        "entry_date": "2026-05-01",
+        "expected_session_date": "2026-09-17",
+        "gex_regime": neg_regime_dict,
+        "bars": synthetic_bars,
+        "settled_close": {
+            "ticker": "TEST_N",
+            "close": 95.0,
+            "session_date": "2026-09-17",
+            "source": "yfinance",
+            "retrieved_ts_utc": "2026-09-18T12:00:00Z",
+        },
+    }
+    res_n = compute_exit_signal_v2(payload_n)
+
+    # Prove fallback path is reached: if bars-based check had breached, thesis_invalidated
+    # becomes True under the fix (taking the else branch), whereas the old bug would have
+    # evaluated bool(sc_breached) == bool(None) == False.
+    def mock_eval_indicators(*args, **kwargs):
+        c, r, m = orig_eval(*args, **kwargs)
+        c["short_strike_breached"] = True
+        return c, r, m
+
+    orig_eval = globals()["evaluate_exit_indicators"]
+    try:
+        globals()["evaluate_exit_indicators"] = mock_eval_indicators
+        res_n_fallback = compute_exit_signal_v2(payload_n)
+    finally:
+        globals()["evaluate_exit_indicators"] = orig_eval
+
+    cond_n = (
+        res_n["structural_evaluation"]["evaluated"] is False
+        and res_n["structural_evaluation"]["close"] is None
+        and res_n["structural_evaluation"]["unknown"] is True
+        and res_n["structural_evaluation"]["breached"] is None
+        and res_n["structural_evaluation"]["reason"] == "short_strike_missing"
+        and res_n["thesis_invalidated"] is False
+        and res_n["thesis_invalidated"] == bool(res_n["checks"]["short_strike_breached"])
+        and res_n_fallback["checks"]["short_strike_breached"] is True
+        and res_n_fallback["thesis_invalidated"] is True
+        and res_n_fallback["thesis_invalidated_by"] == "structural_breach"
+    )
+    if cond_n:
+        print("[PASS] (n) settled_close with missing short_strike sets evaluated=False and falls back to checks")
+    else:
+        print(f"[FAIL] (n) Expected evaluated=False and fallback routing for missing short_strike, got: {res_n}")
+        failures += 1
+
     print("--------------------------------------------------")
     if failures == 0:
-        print("ALL ASSERTIONS PASSED (13/13)")
+        print("ALL ASSERTIONS PASSED (14/14)")
     else:
         print(f"FAILED: {failures} assertion(s) failed.")
         sys.exit(1)

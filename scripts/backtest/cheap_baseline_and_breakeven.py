@@ -58,7 +58,7 @@ def main():
             "pnl_nostop": r_nostop["pnl"],
             "light_volume": (vol_ma20 is not None and vol_at_breach is not None and vol_at_breach < vol_ma20),
             "rsi_at_breach": rsi_at_breach,
-            "ma150_co_breach": (ma150_valid and closes_up_to.iloc[-1] < ma150_at_breach),
+            "ma150_co_breach": (bool(closes_up_to.iloc[-1] < ma150_at_breach) if ma150_valid else None),
         })
 
     n = len(events)
@@ -100,7 +100,7 @@ def main():
 
     print("\n--- Cheap stdlib heuristics (no model) ---")
     precision_recall(lambda e: e["light_volume"], "Hold if breach on LIGHT volume (below 20d avg)")
-    precision_recall(lambda e: not e["ma150_co_breach"], "Hold if MA150 NOT also breached (strike-only breach)")
+    precision_recall(lambda e: e["ma150_co_breach"] is False, "Hold if MA150 NOT also breached (strike-only breach)")
     rsis = [e["rsi_at_breach"] for e in events if e["rsi_at_breach"] is not None]
     if rsis:
         median_rsi = float(np.median(rsis))
@@ -108,7 +108,7 @@ def main():
                           f"Hold if RSI at breach > median ({median_rsi:.1f})")
     else:
         print("No RSI values at breach -- RSI heuristic skipped.")
-    precision_recall(lambda e: e["light_volume"] and not e["ma150_co_breach"],
+    precision_recall(lambda e: e["light_volume"] and e["ma150_co_breach"] is False,
                       "Hold if LIGHT volume AND MA150 not co-breached (combined)")
 
 

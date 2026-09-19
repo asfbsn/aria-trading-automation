@@ -345,6 +345,13 @@ def bearish_candle_pattern(o, h, l, c, prev_o, prev_c):
     return "none"
 
 
+BEAR_DEFAULT_GATE_KEYS = (
+    "below_ma150",
+    "rsi_above_50",
+    "rsi_falling",
+    "near_ma150_resistance",
+    "bearish_candle",
+)
 BEAR_STRUCTURAL_KEYS = (
     "below_ma150",
     "rsi_above_50",
@@ -376,9 +383,10 @@ def bear_entry_checks(
       5. bearish candle (shooting star or bearish engulfing)
 
     Returns (checks dict, entry_confirmed bool). Same default/parameterized
-    contract as entry_checks(): (None, None) means all-7-AND; passing
-    min_structural/min_confirm switches to the BEAR_STRUCTURAL_KEYS/
-    BEAR_CONFIRM_KEYS split for A/B gate-strictness comparison.
+    contract as entry_checks(): (None, None) requires all of
+    BEAR_DEFAULT_GATE_KEYS; passing min_structural/min_confirm switches to
+    the BEAR_STRUCTURAL_KEYS/BEAR_CONFIRM_KEYS split for A/B gate-strictness
+    comparison.
     """
     _validate_gate_thresholds(min_structural, min_confirm, BEAR_STRUCTURAL_KEYS, BEAR_CONFIRM_KEYS)
     if rsis is None:
@@ -416,8 +424,7 @@ def bear_entry_checks(
     checks["candle_pattern"] = pattern
 
     if min_structural is None and min_confirm is None:
-        confirmed = all(v for k, v in checks.items()
-                        if k != "candle_pattern")
+        confirmed = all(checks[k] for k in BEAR_DEFAULT_GATE_KEYS)
     else:
         req_struct = len(BEAR_STRUCTURAL_KEYS) if min_structural is None else min_structural
         req_conf = len(BEAR_CONFIRM_KEYS) if min_confirm is None else min_confirm

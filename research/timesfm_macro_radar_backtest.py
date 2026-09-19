@@ -35,15 +35,11 @@ def main():
     print("Fetching full SPY/VIX history for backtest...", flush=True)
     spy_series = fetch_close_series_dated("SPY", period=MAX_HISTORY_PERIOD)
     vix_series = fetch_close_series_dated("^VIX", period=MAX_HISTORY_PERIOD)
-    # Join on the actual trading date, not tail position -- SPY and ^VIX
-    # histories can differ by a holiday/data gap, and a single missing bar
-    # would otherwise shift every subsequent tail-aligned value by one day
-    # for the rest of the backtest (CodeRabbit finding, 2026-09-15).
-    common_dates = spy_series.index.intersection(vix_series.index)
-    spy_full = spy_series.loc[common_dates].to_numpy()
-    vix_full = vix_series.loc[common_dates].to_numpy()
-    n = len(common_dates)
-    print(f"History length: {n} trading days (date-aligned)", flush=True)
+    # Score forward drawdowns on SPY sessions, even when VIX has data gaps.
+    spy_full = spy_series.to_numpy()
+    vix_full = vix_series.reindex(spy_series.index).to_numpy()
+    n = len(spy_series)
+    print(f"History length: {n} SPY trading days", flush=True)
 
     # Non-overlapping windows: earliest possible evaluation date needs
     # CONTEXT_MAX prior bars; latest needs HORIZON trailing bars to score.
@@ -53,7 +49,10 @@ def main():
     # base_rate division below and raise ZeroDivisionError only after load).
     first_idx = CONTEXT_MAX
     last_idx_exclusive = n - HORIZON + 1
-    window_starts = list(range(first_idx, last_idx_exclusive, HORIZON))
+    window_starts = [
+        idx for idx in range(first_idx, last_idx_exclusive, HORIZON)
+        if np.isfinite(vix_full[idx - 1])
+    ]
     print(f"Non-overlapping {HORIZON}-day windows: {len(window_starts)}", flush=True)
     if not window_starts:
         sys.exit(f"Not enough history ({n} bars) for one {HORIZON}-day window "
@@ -68,7 +67,8 @@ def main():
     results = []
     for i, idx in enumerate(window_starts):
         spy_ctx = spy_full[max(0, idx - CONTEXT_MAX):idx]
-        vix_ctx = vix_full[max(0, idx - CONTEXT_MAX):idx]
+        eval_date = spy_series.index[idx - 1]
+        vix_ctx = vix_series.loc[:eval_date].dropna().to_numpy()[-CONTEXT_MAX:]
         r = evaluate_macro_signal(model, spy_ctx, vix_ctx)
 
         eval_close = float(spy_full[idx - 1])
@@ -114,8 +114,6 @@ def main():
     print(f"Gate fires HALT on {tp+fp}/{n} = {halt_fire_rate:.1%} of all windows")
     print(f"Gate overall accuracy: {gate_accuracy:.1%}")
     print(f"'Always SAFE' (never halt, do nothing) baseline accuracy: {always_safe_accuracy:.1%}")
-    beats_baseline = (not np.isnan(precision)) and gate_accuracy > always_safe_accuracy
-    print(f"\nVERDICT: {'gate beats doing nothing' if beats_baseline else 'gate is DOMINATED by doing nothing -- treat as dead'}")
 
 
 if __name__ == "__main__":

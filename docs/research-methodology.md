@@ -3,7 +3,7 @@
 Standing capability for testing entry-gate hypotheses against real historical
 data, independent of the live scan pipeline. Set up 2026-08-30, first used to
 settle the "should the entry gate loosen from 7-of-7 to structural+2-of-3"
-question — see [Historical note](#historical-note-why-7-of-7-stays) below.
+question — see [Historical note](#historical-note-why-7-of-7-stays-2026-08-30-findings) below.
 
 This is research tooling, not part of the live pipeline. Nothing here is
 wired into `daily-scan.sh`, cron, or any order-placement path.

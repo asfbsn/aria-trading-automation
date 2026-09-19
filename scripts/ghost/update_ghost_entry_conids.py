@@ -25,6 +25,20 @@ from scripts.ghost.ghost_fill_logger import ENTRY_FIELDS
 from scripts.ghost.ghost_exit_logger import is_ready_to_mark, open_candidate_ids
 
 
+def coerce_conid(x):
+    """Return positive integer contract ID or None."""
+    if x is None or isinstance(x, bool):
+        return None
+    if isinstance(x, int):
+        return x if x > 0 else None
+    if isinstance(x, str):
+        s = x.strip()
+        if s.isdigit():
+            val = int(s)
+            return val if val > 0 else None
+    return None
+
+
 def atomic_update_entries(entries_path: Path, update_map: dict) -> dict:
     """Atomically update matching candidate rows in entries_path.
 
@@ -66,21 +80,36 @@ def atomic_update_entries(entries_path: Path, update_map: dict) -> dict:
             target_row = dict(all_rows[idx])
 
             # Check if resolved vs unresolved-blocked
-            status = updates.get('resolution_status', target_row.get('resolution_status', 'exact'))
-            underlying = updates.get('underlying_contract_id')
-            short = updates.get('short_contract_id')
-            long = updates.get('long_contract_id')
+            status = updates.get('resolution_status')
+            raw_underlying = updates.get('underlying_contract_id')
+            raw_short = updates.get('short_contract_id')
+            raw_long = updates.get('long_contract_id')
 
-            is_valid_conid = lambda x: (not isinstance(x, bool)) and isinstance(x, int) and x > 0
+            underlying = coerce_conid(raw_underlying)
+            short = coerce_conid(raw_short)
+            long = coerce_conid(raw_long)
 
-            if status == 'exact' and is_valid_conid(underlying) and is_valid_conid(short) and is_valid_conid(long):
+            if status == 'exact':
+                if underlying is None or short is None or long is None:
+                    malformed = []
+                    if underlying is None:
+                        malformed.append(f"underlying_contract_id={raw_underlying!r}")
+                    if short is None:
+                        malformed.append(f"short_contract_id={raw_short!r}")
+                    if long is None:
+                        malformed.append(f"long_contract_id={raw_long!r}")
+                    raise ValueError(
+                        f"Candidate {cand_id} asserted resolution_status='exact' but had malformed conid field(s): {', '.join(malformed)}"
+                    )
+
+            if underlying is not None and short is not None and long is not None and (status is None or status == 'exact'):
                 target_row['underlying_contract_id'] = str(underlying)
                 target_row['short_contract_id'] = str(short)
                 target_row['long_contract_id'] = str(long)
                 target_row['resolution_status'] = 'exact'
                 resolved += 1
             else:
-                reason = updates.get('reason') or updates.get('unresolved_reason') or 'resolution_failed'
+                reason = updates.get('reason') or updates.get('unresolved_reason') or status or 'resolution_failed'
                 target_row['underlying_contract_id'] = ''
                 target_row['short_contract_id'] = ''
                 target_row['long_contract_id'] = ''

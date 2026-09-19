@@ -1,7 +1,7 @@
 # Experiment Proposal
 
 ## Run Metadata
-- **Date**: 2026-09-18 (third draft — Astra/Fable round 2 addressed; see Revision Log. Remaining open items are now explicitly the user's risk-tolerance decisions, not statistical or code questions — see Section 8.)
+- **Date**: 2026-09-18 (final — registered run `20260918T174731Z_998760cb225f` completed, hypothesis rejected (FAIL) on all gates; see Section 8 Results and Revision Log. No open decisions remain.)
 - **Knob / Parameter Name**: `z_ma150_proximity_upper_bound`, primary value `0.50`; `0.15`/`0.30` exploratory-only, non-gating (Section 3).
 - **Track**: Development — bounded historical work on already-explored history, per `docs/self-improvement-roadmap.md`. Not walk-forward, not confirmation, not eligible to promote any parameter to live use on its own. **Verdicts and the bootstrap in Section 7 use OOS only**, matching the 09-17 proposal's own discipline — stated explicitly here, not left implicit.
 - **Relationship to the accepted 2026-09-17 proposal**: same underlying `vrp_only` entry pool, same `z_ma150` definition, same IS/OOS split, same GEX regime source. Distinct hypothesis, not a revision of the frozen 09-17 proposal, which stays untouched. Nothing here touches `ghost_prescreen_v2.py`, `bps_signal_engine_v2.py`, or any live/cron script; the live Ghost System's `z_ma150 >= 1.5` filter is unaffected.

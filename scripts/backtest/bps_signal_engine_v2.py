@@ -186,7 +186,7 @@ class BullPutSpreadSignalEngine:
                 # Mirror production construction, including its defensive
                 # rounding guard. Price can still gap below the strike at the
                 # next open; do not inspect that future bar to filter signals.
-                short_strike = math.floor(ma150 / 5.0) * 5.0
+                short_strike = math.floor((ma150 - 0.01) / 5.0) * 5.0
                 if short_strike >= close:
                     short_strike = math.floor((min(ma150, close) - 0.01) / 5.0) * 5.0
                 long_strike = short_strike - self.width

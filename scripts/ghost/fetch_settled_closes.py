@@ -293,10 +293,23 @@ def main() -> int:
     # this codebase. Exclusive create -- never overwrite an existing day's
     # archived snapshot.
     dated_path = out_path.parent / f"{out_path.stem}_{last_completed_session}{out_path.suffix}"
-    try:
-        with open(dated_path, "x", encoding="utf-8") as f:
-            json.dump(settled_closes, f, indent=2)
-    except FileExistsError:
+    if not dated_path.exists():
+        tmp_path = dated_path.with_suffix(dated_path.suffix + f".tmp{os.getpid()}")
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(settled_closes, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            try:
+                os.link(tmp_path, dated_path)
+            except FileExistsError:
+                print(f"Dated archive already exists, preserved: {dated_path}")
+        except BaseException:
+            if tmp_path.exists():
+                tmp_path.unlink()
+            raise
+        tmp_path.unlink()
+    else:
         print(f"Dated archive already exists, preserved: {dated_path}")
 
     fetch_ts = datetime.datetime.now(datetime.timezone.utc).isoformat()

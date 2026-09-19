@@ -49,8 +49,10 @@ pre-filtering.
     WebSearch has no live quote feed and cannot answer this — don't use it
     here. If the index doesn't resolve via IBKR, quote the exact error and say
     "VIX unavailable" rather than guessing.
-  - **SPY vs MA150:** `get_price_history` for SPY, >=155 daily bars (same
-    minimum `compute_signal.py` uses for a stable MA150 read), compute the
+  - **SPY vs MA150:** `search_contracts` (security_type STK) for "SPY" →
+    resolve `contract_id` (exact symbol match, US primary listing), then
+    `get_price_history` for it, >=155 daily bars (same minimum
+    `compute_signal.py` uses for a stable MA150 read), compute the
     150-day SMA of closes yourself, compare against the latest close.
   - **Macro events in the next ~30 days** (Fed decision, CPI, jobs report):
     one WebSearch — this one stays WebSearch, it's a genuine search question
@@ -478,8 +480,12 @@ garbage response) and you have nothing to write down at all.
 
 SCREENER_CONSTITUENTS = the shortlist tickers. SIGNALS_COMPLETED +
 SIGNALS_FAILED MUST equal the length of the prescreen shortlist (not the full
-universe). Prescreen failures are accounted in the wrapper, not in these
-counters. If any shortlisted ticker failed, list which ones and why in a
+universe). Any ticker reaching a definitive Phase B outcome (including
+prescreen failures routed to Phase B) is counted by that Phase B outcome (not
+excluded from the counters). Reserve SIGNALS_FAILED strictly for tickers where a
+tool call genuinely failed/errored and no result could be obtained at all — not
+for tickers correctly screened out by a legitimate prescreen or Phase B gate.
+If any shortlisted ticker failed, list which ones and why in a
 separate **Failures** subsection — NOT inside the Rejects section, and NOT
 counted in the Headline's reject count: a failed ticker never got a
 definitive answer, so it isn't a REJECT, and folding it into "reject-tickers-
@@ -493,9 +499,11 @@ never be reported as a clean run. `insufficient_data` and "no contract found"
 are NOT tool-call breakages — see the litmus test above.
 
 FINALISTS_VERIFIED must equal the count of (prescreen entry_confirmed==true tickers)
-+ (prescreen failures count) — the wrapper validates this independently from the
-prescreen JSON, so don't try to game it by routing fewer names to Phase B than
-prescreen's data implies. FINALISTS_VERIFIED_TICKERS must be exactly that same
++ (prescreen failures count) MINUS any finalist counted in SIGNALS_FAILED (a genuine
+tool breakage never reaches a definitive answer, so it cannot be counted here). With
+SIGNALS_FAILED == 0 the two sides match exactly; the wrapper treats any shortfall as a
+failed run. Don't route fewer names to Phase B than prescreen's data implies.
+FINALISTS_VERIFIED_TICKERS must be exactly that same
 set of tickers (order doesn't matter, the wrapper sorts both sides) — matching
 the count alone is not enough; the wrapper checks membership too, so silently
 swapping one expected finalist for an unexpected one fails the run even if the

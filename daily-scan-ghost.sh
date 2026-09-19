@@ -241,6 +241,8 @@ print(','.join(r['ticker'] for r in entries if r['trade_date'] == today))
 PY
 )"
 TELEGRAM_MSG="ARIA Ghost System — ${TODAY}. $(tail -n 1 "$RUN_OUTPUT")"
-[ -n "$ACCEPTED_TICKERS" ] && TELEGRAM_MSG="$TELEGRAM_MSG Accepted: $ACCEPTED_TICKERS"
+if [ -n "$ACCEPTED_TICKERS" ]; then
+  TELEGRAM_MSG="$TELEGRAM_MSG Accepted: $ACCEPTED_TICKERS"
+fi
 send_telegram "$TELEGRAM_MSG" "$LOG_FILE"
 echo "[$RUN_TS] Done → $LOG_FILE" >>"$ERR_FILE"

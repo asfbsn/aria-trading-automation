@@ -70,31 +70,37 @@ def migrate_entries(entries_path: Path, as_of_date: str = None) -> int:
                 f"but does not match full ENTRY_FIELDS. Manual intervention required."
             )
 
-        # Archive old file
-        bak_path = find_backup_path(entries_path, as_of_date=as_of_date)
-        entries_path.rename(bak_path)
-        print(f"[MIGRATE] Archived old-schema file -> {bak_path}")
-
-        # Read old rows
-        with bak_path.open('r', newline='', encoding='utf-8') as handle:
+        # Read old rows from live entries_path
+        with entries_path.open('r', newline='', encoding='utf-8') as handle:
             old_reader = csv.DictReader(handle)
             old_rows = list(old_reader)
 
-        # Write fresh file to temp file
+        # Write fresh file to temp file, then archive old file and replace
         tmp_path = entries_path.with_suffix(entries_path.suffix + f".tmp{os.getpid()}")
-        with tmp_path.open('w', newline='', encoding='utf-8') as handle:
-            writer = csv.DictWriter(handle, fieldnames=ENTRY_FIELDS)
-            writer.writeheader()
-            for row in old_rows:
-                migrated_row = dict(row)
-                migrated_row['underlying_contract_id'] = ''
-                migrated_row['short_contract_id'] = ''
-                migrated_row['long_contract_id'] = ''
-                writer.writerow(migrated_row)
-            handle.flush()
-            os.fsync(handle.fileno())
+        try:
+            with tmp_path.open('w', newline='', encoding='utf-8') as handle:
+                writer = csv.DictWriter(handle, fieldnames=ENTRY_FIELDS, extrasaction='ignore')
+                writer.writeheader()
+                for row in old_rows:
+                    migrated_row = dict(row)
+                    migrated_row['underlying_contract_id'] = ''
+                    migrated_row['short_contract_id'] = ''
+                    migrated_row['long_contract_id'] = ''
+                    writer.writerow(migrated_row)
+                handle.flush()
+                os.fsync(handle.fileno())
 
-        os.replace(tmp_path, entries_path)
+            # Archive old file only after temp file is written and synced
+            bak_path = find_backup_path(entries_path, as_of_date=as_of_date)
+            entries_path.rename(bak_path)
+            print(f"[MIGRATE] Archived old-schema file -> {bak_path}")
+
+            os.replace(tmp_path, entries_path)
+        except Exception:
+            if tmp_path.exists():
+                tmp_path.unlink()
+            raise
+
         print(f"[MIGRATE] Migrated {len(old_rows)} rows forward to new schema at {entries_path}.")
         return 0
 

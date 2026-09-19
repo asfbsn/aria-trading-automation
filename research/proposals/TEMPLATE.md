@@ -6,7 +6,7 @@ Copy this file to research/proposals/<date>-<knob>.md and fill in every section 
 - **Date**: YYYY-MM-DD
 - **Knob / Parameter Name**: [e.g. vrp_threshold, gex_percentile, liquidity_gate]
 - **Track**: [Development | Confirmation]
-  - *If Development*: chronological walk-forward on explored history (2023–2026).
+  - *If Development*: default to a fixed IS/OOS split on already-explored history (2023–2026), reusing the existing repo-wide split boundaries (both completed Development proposals to date used this). A chronological walk-forward split remains permitted as an alternative, but only when explicitly selected and justified in Section 6 — it is not the default.
   - *If Confirmation* (requires prior freeze before collecting forward ghost data):
     - **Frozen Candidate**: [Exact parameter value or specification to deploy, e.g. VRP=1.10]
     - **Freeze Date**: [YYYY-MM-DD] (Confirmation data must be collected strictly after this date; no performance-driven changes or optional stopping allowed)

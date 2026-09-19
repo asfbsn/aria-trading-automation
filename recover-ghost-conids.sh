@@ -16,8 +16,8 @@ CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-4-8}"
 # Narrowly scoped tool grants: read-only contract resolution + scoped scratch I/O ONLY.
 # Deliberately excludes get_price_snapshot and routine mark/fill tools.
 readonly GHOST_RECOVER_ALLOWED_TOOLS="\
-Read(/${ARIA_HOME}/state/ghost/ghost_entries.csv),\
-Edit(/${ARIA_HOME}/state/scratch/ghost_recovery_*.json),\
+Read(${ARIA_HOME}/state/ghost/ghost_entries.csv),\
+Edit(${ARIA_HOME}/state/scratch/ghost_recovery_*.json),\
 mcp__claude_ai_Interactive_Brokers_IBKR__search_contracts,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_option_parameters,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_option_data"
@@ -84,6 +84,7 @@ PROMPT="$(cat "$PROMPT_FILE")
 ## Run Metadata
 SCAN_DATE: $TODAY
 RUN_ID: $RUN_ID
+SCRATCH_FILE: $SCRATCH_FILE
 CODE_VERSION_HASH: $CODE_VERSION_HASH
 GIT_HEAD: $GIT_HEAD
 GIT_DIRTY: $GIT_DIRTY"
@@ -124,6 +125,7 @@ if [ -f "$SCRATCH_FILE" ]; then
     >>"$LOG_FILE" 2>>"$ERR_FILE"
 else
   echo "[$RUN_TS] No scratch file produced at $SCRATCH_FILE" >>"$ERR_FILE"
+  false
 fi
 
 notify "ARIA Ghost System (Conid Recovery) complete" "$TODAY"
