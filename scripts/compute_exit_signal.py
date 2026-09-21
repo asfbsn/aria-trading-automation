@@ -30,6 +30,8 @@ Flags:
 """
 import json
 import sys
+from datetime import datetime, time
+from zoneinfo import ZoneInfo
 
 from signal_core import (
     MIN_BARS,
@@ -61,7 +63,10 @@ def main():
     bars = payload["bars"] if "bars" in payload else bars_from_parallel_arrays(payload)
 
     if exclude_last_bar and bars:
-        bars = bars[:-1]
+        now_ny = datetime.now(ZoneInfo("America/New_York"))
+        today_ny_str = now_ny.strftime("%Y-%m-%d")
+        if bars[-1]["date"][:10] == today_ny_str and now_ny.time() < time(16, 0):
+            bars = bars[:-1]
 
     if len(bars) < MIN_BARS:
         print(json.dumps({

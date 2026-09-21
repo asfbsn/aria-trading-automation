@@ -667,7 +667,11 @@ def compute_exit_signal_v2(
     # 2. Extract and sanitize OHLCV bars
     bars = payload["bars"] if "bars" in payload else bars_from_parallel_arrays(payload)
     if exclude_last_bar and bars:
-        bars = bars[:-1]
+        from zoneinfo import ZoneInfo
+        now_ny = datetime.datetime.now(ZoneInfo("America/New_York"))
+        today_ny_str = now_ny.strftime("%Y-%m-%d")
+        if bars[-1]["date"][:10] == today_ny_str and now_ny.time() < datetime.time(16, 0):
+            bars = bars[:-1]
 
     if len(bars) < MIN_BARS:
         hard_close_insufficient = (
@@ -820,6 +824,9 @@ def run_self_tests() -> None:
       (n) settled_close with missing short_strike resets sc_valid to False,
           leaving structural_evaluation unmeasured (evaluated=False,
           reason="short_strike_missing") and falling back to checks["short_strike_breached"].
+      (o) exclude_last_bar=True with last bar date != today keeps last bar (pre-market call).
+      (p) exclude_last_bar=True with last bar date == today drops in-progress bar (regular-hours call).
+      (q) exclude_last_bar=True with last bar date == today and time >= 16:00 ET keeps settled bar (post-market call).
     """
     print("=== [compute_exit_signal_v2] Running Self-Tests ===")
     failures = 0
@@ -1341,9 +1348,98 @@ def run_self_tests() -> None:
         print(f"[FAIL] (n) Expected evaluated=False and fallback routing for missing short_strike, got: {res_n}")
         failures += 1
 
+    # (o) exclude_last_bar=True with last bar date != today (Case A: pre-market)
+    # The last bar must NOT be dropped; returned close must match the last bar.
+    from unittest.mock import patch
+
+    class MockDtCaseA(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.datetime(2026, 6, 15, 9, 0, 0, tzinfo=tz)
+
+    payload_o = {
+        "ticker": "AAPL",
+        "short_strike": short_strike,
+        "initial_credit": initial_credit,
+        "entry_date": "2026-05-01",
+        "contracts": 1,
+        "gex_regime": neg_regime_dict,
+        "bars": [b.copy() for b in synthetic_bars],
+    }
+    payload_o["bars"][-1]["date"] = "2026-06-12T13:30:00Z"
+    payload_o["bars"][-1]["close"] = 95.0
+    payload_o["bars"][-2]["close"] = 100.0
+
+    with patch("datetime.datetime", MockDtCaseA):
+        res_o = compute_exit_signal_v2(payload_o, exclude_last_bar=True)
+
+    if res_o.get("close") == 95.0:
+        print("[PASS] (o) exclude_last_bar keeps last bar when bar date != today (pre-market call)")
+    else:
+        print(f"[FAIL] (o) Expected close 95.0 (kept), got {res_o.get('close')}")
+        failures += 1
+
+    # (p) exclude_last_bar=True with last bar date == today (Case B: regular hours)
+    # The in-progress last bar MUST be dropped; returned close must match the second-to-last bar.
+    class MockDtCaseB(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.datetime(2026, 6, 15, 14, 0, 0, tzinfo=tz)
+
+    payload_p = {
+        "ticker": "AAPL",
+        "short_strike": short_strike,
+        "initial_credit": initial_credit,
+        "entry_date": "2026-05-01",
+        "contracts": 1,
+        "gex_regime": neg_regime_dict,
+        "bars": [b.copy() for b in synthetic_bars],
+    }
+    payload_p["bars"][-1]["date"] = "2026-06-15T18:00:00Z"
+    payload_p["bars"][-1]["close"] = 95.0
+    payload_p["bars"][-2]["close"] = 100.0
+
+    with patch("datetime.datetime", MockDtCaseB):
+        res_p = compute_exit_signal_v2(payload_p, exclude_last_bar=True)
+
+    if res_p.get("close") == 100.0:
+        print("[PASS] (p) exclude_last_bar drops last bar when bar date == today (regular-hours call)")
+    else:
+        print(f"[FAIL] (p) Expected close 100.0 (dropped), got {res_p.get('close')}")
+        failures += 1
+
+    # (q) exclude_last_bar=True with last bar date == today and time >= 16:00 ET (Case C: post-market)
+    # The settled last bar must NOT be dropped; returned close must match the last bar.
+    class MockDtCaseC(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.datetime(2026, 6, 15, 17, 0, 0, tzinfo=tz)
+
+    payload_q = {
+        "ticker": "AAPL",
+        "short_strike": short_strike,
+        "initial_credit": initial_credit,
+        "entry_date": "2026-05-01",
+        "contracts": 1,
+        "gex_regime": neg_regime_dict,
+        "bars": [b.copy() for b in synthetic_bars],
+    }
+    payload_q["bars"][-1]["date"] = "2026-06-15T21:00:00Z"
+    payload_q["bars"][-1]["close"] = 95.0
+    payload_q["bars"][-2]["close"] = 100.0
+
+    with patch("datetime.datetime", MockDtCaseC):
+        res_q = compute_exit_signal_v2(payload_q, exclude_last_bar=True)
+
+    if res_q.get("close") == 95.0:
+        print("[PASS] (q) exclude_last_bar keeps last bar when bar date == today and time >= 16:00 ET (post-market call)")
+    else:
+        print(f"[FAIL] (q) Expected close 95.0 (kept), got {res_q.get('close')}")
+        failures += 1
+
     print("--------------------------------------------------")
     if failures == 0:
-        print("ALL ASSERTIONS PASSED (14/14)")
+        print("ALL ASSERTIONS PASSED (17/17)")
     else:
         print(f"FAILED: {failures} assertion(s) failed.")
         sys.exit(1)

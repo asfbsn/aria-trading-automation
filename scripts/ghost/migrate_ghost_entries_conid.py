@@ -77,6 +77,8 @@ def migrate_entries(entries_path: Path, as_of_date: str = None) -> int:
 
         # Write fresh file to temp file, then archive old file and replace
         tmp_path = entries_path.with_suffix(entries_path.suffix + f".tmp{os.getpid()}")
+        bak_path = None
+        archived = False
         try:
             with tmp_path.open('w', newline='', encoding='utf-8') as handle:
                 writer = csv.DictWriter(handle, fieldnames=ENTRY_FIELDS, extrasaction='ignore')
@@ -93,10 +95,13 @@ def migrate_entries(entries_path: Path, as_of_date: str = None) -> int:
             # Archive old file only after temp file is written and synced
             bak_path = find_backup_path(entries_path, as_of_date=as_of_date)
             entries_path.rename(bak_path)
+            archived = True
             print(f"[MIGRATE] Archived old-schema file -> {bak_path}")
 
             os.replace(tmp_path, entries_path)
         except Exception:
+            if archived and not entries_path.exists() and bak_path is not None and bak_path.exists():
+                bak_path.rename(entries_path)
             if tmp_path.exists():
                 tmp_path.unlink()
             raise

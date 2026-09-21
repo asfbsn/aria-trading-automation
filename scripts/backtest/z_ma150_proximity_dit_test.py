@@ -518,8 +518,11 @@ def bootstrap_iteration(
     for attempt in range(MAX_REDRAWS + 1):
         chosen = draw()
         totals = counts[chosen].sum(axis=0)
-        # Combined arm is index 3
-        if totals[3] > 0:
+        # gex_only (1), proximity_only (2), and combined (3) arms all divide
+        # into rates below -- a redraw with zero blocks in ANY of them, not
+        # just combined, produces a division-by-zero for that arm's rate
+        # without tripping this guard (CodeRabbit finding, 2026-09-21).
+        if totals[1] > 0 and totals[2] > 0 and totals[3] > 0:
             if isinstance(events, dict):
                 rates = {col: ev[chosen].sum(axis=0) / totals for col, ev in events.items()}
             else:
