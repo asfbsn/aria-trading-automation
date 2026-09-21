@@ -361,6 +361,31 @@ if a specific filing-index URL is already known from Call 1's results.
 - **Both calls clear (or unknown/unavailable without red flag)** → **PRIME**
   (Table 1). Every Table 1 row must display its research status inline.
 
+## ⚖️ BULL/BEAR DEBATE — PRIME-eligible only
+Runs ONLY on candidates reaching this stage — that is, the names that survived ALL prior gates (technical rules 1, 3, 5, R/R VERIFICATION at/below MA-150, and the QUALITATIVE RESEARCH GATE with a PRIME verdict; at most the top 3, ranked by R/R ascending). Do NOT run this on RADAR names or REJECTs. Plainly: this debate operates strictly on names reaching this stage, bounding reasoning cost.
+
+**CRITICAL GUARDRAIL — NO NEW TOOL CALLS:**
+This step must NOT call `WebSearch`, `WebFetch`, `get_price_history`, `get_option_data`, `get_price_snapshot`, or any other tool under any circumstances. It argues ONLY over evidence already present in context from Phase B (the IBKR-verified technical checks, settled vs provisional price action, MA150 support levels, option chain pricing/liquidity) and the QUALITATIVE RESEARCH GATE immediately above (confirmed findings as well as any "unknown" or "unavailable" statuses).
+
+**Asymmetric verdict rule:**
+Cite repo design principle: **"Design principle — judgment may escalate, never suppress."** Hard-gate outcomes and upstream disqualifications are deterministic and must never be downgraded, overridden, or suppressed by any judgment check.
+- The Bear case can ONLY ever demote a candidate (`PRIME` → `DEMOTE_TO_RADAR` or `PRIME` → `PROCEED_WITH_CAUTION`), never promote one.
+- The Bull case can NEVER override, upgrade, or rescue a candidate that already failed an upstream gate (R/R band, MA150 support, liquidity limits, or SEC red flags).
+- This section only ever adds friction or downgrades an already-PRIME candidate; it never grants a pass.
+
+**Per-candidate debate structure (produce for each PRIME-eligible candidate):**
+- **Bull case** (2–4 lines): the strongest case FOR this trade holding up through expiration (~30 DTE), grounded strictly in the technical structure (support cushion, MA150 buffer, candlestick/RSI confirmation) and research evidence already gathered.
+- **Bear case** (2–4 lines): the strongest case AGAINST the trade, grounded in the same gathered evidence. **Mandatory:** The Bear case is explicitly required to weigh anything the research gate flagged as "unknown" or "unavailable" (e.g. unconfirmed earnings date, missing analyst coverage, unverified filings) as a real, arguable risk, not dismiss or shrug it off because it wasn't a confirmed red flag. If historical reporting cadences, sector trends, or timing ambiguities indicate a plausible catalyst before expiry, the Bear case must explicitly elevate that timing risk as a live threat to the trade thesis, not a footnote.
+- **Verdict**: exactly one of `PROCEED`, `PROCEED_WITH_CAUTION`, or `DEMOTE_TO_RADAR`.
+
+**Verdict definitions and downstream effects:**
+- `PROCEED`: Bull case decisively holds; no material unresolved ambiguity or unhedged risk in the Bear case. Candidate remains PRIME and advances to the TRADE DIRECTIVE normally without caveat.
+- `PROCEED_WITH_CAUTION`: Technical thesis remains intact, but the Bear case identifies a real, weighable risk (e.g. plausible earnings timing ambiguity, compressed support buffer, or market headwinds). Candidate remains PRIME and proceeds to the TRADE DIRECTIVE, but the Bear case must be included verbatim in that candidate's execution directive block as a named caveat (`- **Caveat (Bull/Bear debate):** <Bear case verbatim>`, placed right after `Macro context note:` and before `EXITS:`), leaving sizing, pricing, and exit fields unchanged.
+- `DEMOTE_TO_RADAR`: The Bear case reveals unaddressed fragility, high risk of catalyst collision, or unmeasured risk (such as high probability of earnings before expiry despite "unknown" status) that makes capital risk unacceptable. Candidate is demoted from Table 1 (PRIME) to Table 2 (RADAR) exactly like an existing research-gate downgrade (recorded in Table 2 with reason: `Bull/Bear debate downgrade: DEMOTE_TO_RADAR — <Bear case summary>`), and does NOT receive a TRADE DIRECTIVE.
+
+**Reconciliation & counter invariance:**
+This debate is a qualitative annotation and gating filter, NOT a new counter. It must NOT interact with, be counted in, or change the reconciliation logic for `SCREENER_CONSTITUENTS`, `SIGNALS_COMPLETED`, `SIGNALS_FAILED`, `FINALISTS_VERIFIED`, or `FINALISTS_VERIFIED_TICKERS`. A `DEMOTE_TO_RADAR` verdict changes only WHICH TABLE a candidate appears in (Table 1 vs Table 2), not whether it was counted as a completed signal. The ticker was already definitively classified and verified in Phase B; its completion count is invariant. Do not increment or decrement any pipeline counter here.
+
 ## 📋 TRADE DIRECTIVE — final PRIME names only
 For all names that survived ALL gates (technical rules + R/R verification + research gate — typically 0–3), first run the allocator below ONCE across the full set, then emit one EXECUTION PLAN block per name using its allocator result, in order.
 
