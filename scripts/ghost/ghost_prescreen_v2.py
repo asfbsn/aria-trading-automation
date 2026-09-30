@@ -17,10 +17,12 @@ import pickle
 import random
 import re
 import sys
+import tempfile
 from typing import Any, Dict, List, Optional, Tuple
 import uuid
 from zoneinfo import ZoneInfo
 
+import numpy as np
 import pandas as pd
 import yfinance as yf
 
@@ -30,7 +32,7 @@ sys.path.insert(0, str(REPO_ROOT / "scripts" / "backtest"))
 
 from bps_signal_engine_v2 import BullPutSpreadSignalEngine  # noqa: E402
 import dix_fetcher_v2  # noqa: E402
-from signal_core import MIN_BARS  # noqa: E402
+from signal_core import MIN_BARS, ema  # noqa: E402
 
 DEFAULT_IV_CACHE = REPO_ROOT / "state" / "ghost" / "iv_live.pkl"
 DEFAULT_UNIVERSE = REPO_ROOT / "data" / "universe.csv"
@@ -38,6 +40,7 @@ DEFAULT_UNIVERSE = REPO_ROOT / "data" / "universe.csv"
 MIN_Z_MA150_COMBINED = 1.5  # research/proposals/2026-09-17-gex-pin-ma150-extension.md — accepted screening candidate (lowest passing threshold of the three tested: 1.5, 2.0, 2.5)
 CANDIDATE_CAP = 15  # hard cap on the per-run IBKR quote-capture loop — observed ~40s/candidate against a 15-minute CLAUDE_TIMEOUT in daily-scan-ghost.sh
 FILTER_TAG = "gex_positive_z_ma150_ge_1.5"
+FILTER_TAG_BASELINE = "gex_positive_z_ma150_ge_1.5_baseline_fallback"
 
 # Scope limits on what this collection can and cannot later claim (Astra,
 # 2026-09-17 -- keep these narrow, do not let a future readout overreach):
@@ -210,6 +213,48 @@ def filter_entries_to_target_session(
     return surviving
 
 
+def compute_z_ma150_for_entry(
+    entry: Dict[str, Any],
+    data_map: Dict[str, pd.DataFrame],
+) -> float | None:
+    """Compute z_ma150 post-hoc for baseline entries, matching BullPutSpreadSignalEngine.generate()."""
+    code = entry.get("code")
+    trade_date_str = entry.get("date")
+    df = data_map.get(code)
+    if df is None:
+        return None
+    df = df.sort_index()
+
+    dates = [d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d)[:10] for d in df.index]
+    try:
+        fill_idx = dates.index(trade_date_str)
+    except ValueError:
+        return None
+
+    if fill_idx < 1:
+        return None
+
+    i = fill_idx - 1
+    closes = df["close"].tolist()
+    signal_closes = closes[: i + 1]
+    close = closes[i]
+
+    ma150_gate = ema(signal_closes, 150)
+    tail = np.asarray(signal_closes[-21:], dtype=float)
+    if len(tail) == 21 and np.all(tail > 0) and np.all(np.isfinite(tail)):
+        sigma = float(np.std(np.log(tail[1:] / tail[:-1]), ddof=1))
+        if (
+            math.isfinite(sigma)
+            and sigma > 0
+            and ma150_gate is not None
+            and math.isfinite(ma150_gate)
+            and close > 0
+        ):
+            z_val = (close - ma150_gate) / (close * sigma)
+            return float(z_val) if math.isfinite(z_val) else None
+    return None
+
+
 def generate_candidate_id(
     trade_date: str,
     ticker: str,
@@ -345,6 +390,23 @@ def run_synthetic_filter_test() -> None:
     assert today_target in output_str, f"Today target date {today_target} missing from output JSON!"
     assert "z_ma150" in output_str, "z_ma150 missing from output JSON!"
     assert "filter_tag" in output_str, "filter_tag missing from output JSON!"
+
+    # 3b. Verify baseline post-hoc z_ma150 backfill and FILTER_TAG_BASELINE
+    baseline_entry = {
+        "code": test_code,
+        "date": surviving_entry["date"],
+        "signal_close": surviving_entry["signal_close"],
+        "z_ma150": None,
+    }
+    backfilled_z = compute_z_ma150_for_entry(baseline_entry, data_map)
+    assert backfilled_z is not None, "compute_z_ma150_for_entry returned None for valid synthetic data"
+    assert math.isclose(backfilled_z, surviving_entry["z_ma150"], rel_tol=1e-6), (
+        f"Parity mismatch: backfilled {backfilled_z} vs vrp_only {surviving_entry['z_ma150']}"
+    )
+    assert FILTER_TAG_BASELINE != FILTER_TAG
+    assert "baseline_fallback" in FILTER_TAG_BASELINE
+    print(f"PASS: Baseline backfill z_ma150 ({backfilled_z:.4f}) matches vrp_only exact calculation.")
+    print(f"PASS: Distinct FILTER_TAG_BASELINE={FILTER_TAG_BASELINE} verified.")
 
     print(f"PASS: Older date {older_target} present in engine.entries, strictly absent from output JSON.")
     print(f"PASS: Only target date {today_target} retained in candidate output (1 candidate in final JSON).\n")
@@ -503,20 +565,49 @@ def main() -> None:
 
     # 4. Instantiate BullPutSpreadSignalEngine with suppress_reentry=False
     iv_cache_path = Path(args.iv_cache).resolve()
-    if not iv_cache_path.exists():
-        sys.stderr.write(f"ERROR: IV cache file not found: {iv_cache_path}\n")
-        sys.exit(1)
+    if args.mode == "baseline":
+        engine = None
+        if iv_cache_path.exists():
+            try:
+                engine = BullPutSpreadSignalEngine(
+                    mode=args.mode,
+                    vrp_threshold=args.vrp_threshold,
+                    iv_hv_cache_path=iv_cache_path,
+                    suppress_reentry=False,
+                )
+            except Exception as exc:
+                print(f"INFO: Could not load IV cache ({exc}); using empty cache for baseline mode")
+        if engine is None:
+            with tempfile.TemporaryDirectory(prefix="ghost-iv-fallback-") as tmp_dir:
+                tmp_cache = Path(tmp_dir) / "empty_iv_cache.pkl"
+                with open(tmp_cache, "wb") as f:
+                    pickle.dump({}, f)
+                engine = BullPutSpreadSignalEngine(
+                    mode=args.mode,
+                    vrp_threshold=args.vrp_threshold,
+                    iv_hv_cache_path=tmp_cache,
+                    suppress_reentry=False,
+                )
+    else:
+        if not iv_cache_path.exists():
+            sys.stderr.write(f"ERROR: IV cache file not found: {iv_cache_path}\n")
+            sys.exit(1)
 
-    engine = BullPutSpreadSignalEngine(
-        mode=args.mode,
-        vrp_threshold=args.vrp_threshold,
-        iv_hv_cache_path=iv_cache_path,
-        suppress_reentry=False,
-    )
+        engine = BullPutSpreadSignalEngine(
+            mode=args.mode,
+            vrp_threshold=args.vrp_threshold,
+            iv_hv_cache_path=iv_cache_path,
+            suppress_reentry=False,
+        )
 
     # 5. Generate signals
     engine.generate(data_map)
     print(f"engine.generate finished: {len(engine.entries)} total raw historical entries")
+
+    if args.mode == "baseline":
+        for entry in engine.entries:
+            if entry.get("z_ma150") is None:
+                entry["z_ma150"] = compute_z_ma150_for_entry(entry, data_map)
 
     # 6. Filter engine.entries to ONLY target session (yesterday / last completed session)
     surviving = filter_entries_to_target_session(engine.entries, data_map, last_session_str)
@@ -562,6 +653,7 @@ def main() -> None:
           f"emitted={len(final_candidates)} (subsample_applied={subsample_applied})")
 
     # 9. Format candidates
+    filter_tag = FILTER_TAG_BASELINE if args.mode == "baseline" else FILTER_TAG
     candidates_list: List[Dict[str, Any]] = []
     for entry, sig_date in final_candidates:
         ticker = entry["code"]
@@ -588,15 +680,21 @@ def main() -> None:
                 history.index.map(lambda d: pd.Timestamp(d).strftime("%Y-%m-%d")) == sig_date
             ]
             if not matching.empty:
-                raw_iv = float(matching.iloc[-1]["iv_current"])
-                raw_hv = float(matching.iloc[-1]["hv_current"])
-                # Same validity bar as BullPutSpreadSignalEngine._vrp_ratio:
-                # finite, non-negative IV, positive HV -- reject silently to
-                # null rather than let a bad DoltHub row through to the
-                # candidate JSON just because this readout path is separate
-                # from the ratio computation that already guards it.
-                if math.isfinite(raw_iv) and math.isfinite(raw_hv) and raw_iv >= 0 and raw_hv > 0:
-                    iv_current, hv_current = raw_iv, raw_hv
+                try:
+                    val_iv = matching.iloc[-1]["iv_current"] if "iv_current" in matching.columns else None
+                    val_hv = matching.iloc[-1]["hv_current"] if "hv_current" in matching.columns else None
+                    if val_iv is not None and val_hv is not None:
+                        raw_iv = float(val_iv)
+                        raw_hv = float(val_hv)
+                        # Same validity bar as BullPutSpreadSignalEngine._vrp_ratio:
+                        # finite, non-negative IV, positive HV -- reject silently to
+                        # null rather than let a bad DoltHub row through to the
+                        # candidate JSON just because this readout path is separate
+                        # from the ratio computation that already guards it.
+                        if math.isfinite(raw_iv) and math.isfinite(raw_hv) and raw_iv >= 0 and raw_hv > 0:
+                            iv_current, hv_current = raw_iv, raw_hv
+                except (KeyError, ValueError, TypeError):
+                    iv_current, hv_current = None, None
 
         candidates_list.append({
             "candidate_id": cand_id,
@@ -614,8 +712,8 @@ def main() -> None:
             "gex_percentile": gex_percentile,
             "gex_data_available": gex_data_available,
             "gex_as_of": gex_as_of,
-            "z_ma150": round(float(entry["z_ma150"]), 4),
-            "filter_tag": FILTER_TAG,
+            "z_ma150": round(float(entry["z_ma150"]), 4) if entry.get("z_ma150") is not None else None,
+            "filter_tag": filter_tag,
         })
 
     # 10. Write output JSON

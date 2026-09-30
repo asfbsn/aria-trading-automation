@@ -103,10 +103,10 @@ cd "$ARIA_HOME"
 # ghost_prescreen_v2.py's exact-date-only IV lookup silently produced zero
 # candidates every run (no exception, no reconciliation failure, since zero
 # candidates matches zero observations) until this was noticed on the
-# 2026-09-17 19:20 run. fetch_iv_live.py already fails loudly (exit 1) if
-# the newest session's valid-symbol coverage drops below 50% of the universe,
-# so a real DoltHub problem here aborts the whole scan via the existing ERR
-# trap rather than silently reproducing the same stale-cache failure.
+# 2026-09-17 19:20 run. fetch_iv_live.py creates an iv_fallback_active marker and
+# exits 0 if DoltHub is unreachable or coverage drops below 50%, triggering a
+# fallback to baseline mode (no VRP) instead of failing the entire scan or
+# silently reproducing the stale-cache failure.
 # Budget widened 3m -> 8m 2026-09-30: DoltHub's own worst-case retry math
 # (dolthub_iv_pull.MAX_ATTEMPTS=6, BACKOFF up to 48s between attempts) can
 # exceed 3 minutes on a single flaky date with WORKERS=2 pulling 10 dates in
@@ -115,7 +115,15 @@ cd "$ARIA_HOME"
 timeout 8m "$ARIA_HOME/scripts/backtest/.venv/bin/python3" \
   "$ARIA_HOME/scripts/ghost/fetch_iv_live.py" --out "$STATE_DIR/ghost/iv_live.pkl" \
   >>"$ERR_FILE" 2>&1
-echo "[$RUN_TS] IV cache refreshed -> $STATE_DIR/ghost/iv_live.pkl" >>"$ERR_FILE"
+if [ -f "$STATE_DIR/ghost/iv_fallback_active" ]; then
+  echo "[$RUN_TS] DoltHub unavailable -- running baseline mode (no VRP)" >>"$ERR_FILE"
+  MODE_FLAG="--mode baseline"
+  FALLBACK_NOTE=" [FALLBACK: baseline mode]"
+else
+  echo "[$RUN_TS] IV cache refreshed -> $STATE_DIR/ghost/iv_live.pkl" >>"$ERR_FILE"
+  MODE_FLAG="--mode vrp_only"
+  FALLBACK_NOTE=""
+fi
 PRESCREEN_FILE="$STATE_DIR/scratch/ghost_prescreen_${TODAY}.json"
 # Generate today's prescreen ourselves -- this wrapper only ever validated an
 # already-existing file, which worked for manual smoke-testing (prescreen run
@@ -126,7 +134,7 @@ PRESCREEN_FILE="$STATE_DIR/scratch/ghost_prescreen_${TODAY}.json"
 # smoke-test-only knob. 10m timeout matches daily-scan.sh's own prescreen
 # guard against a hung yfinance pull.
 timeout 10m "$ARIA_HOME/scripts/backtest/.venv/bin/python3" \
-  "$ARIA_HOME/scripts/ghost/ghost_prescreen_v2.py" --output "$PRESCREEN_FILE" \
+  "$ARIA_HOME/scripts/ghost/ghost_prescreen_v2.py" $MODE_FLAG --output "$PRESCREEN_FILE" \
   >>"$ERR_FILE" 2>&1
 echo "[$RUN_TS] Prescreen generated -> $PRESCREEN_FILE" >>"$ERR_FILE"
 # Validate local metadata and capture the raw-row baseline before the scan.
@@ -255,7 +263,7 @@ entries = rows(ROOT / 'state/ghost/ghost_entries.csv')
 print(','.join(r['ticker'] for r in entries if r['trade_date'] == today))
 PY
 )"
-TELEGRAM_MSG="ARIA Ghost System — ${TODAY}. $(tail -n 1 "$RUN_OUTPUT")"
+TELEGRAM_MSG="ARIA Ghost System — ${TODAY}${FALLBACK_NOTE}. $(tail -n 1 "$RUN_OUTPUT")"
 if [ -n "$ACCEPTED_TICKERS" ]; then
   TELEGRAM_MSG="$TELEGRAM_MSG Accepted: $ACCEPTED_TICKERS"
 fi

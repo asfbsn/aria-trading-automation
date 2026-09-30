@@ -28,6 +28,7 @@ sys.path.insert(0, str(REPO_ROOT / "scripts" / "backtest"))
 from dolthub_iv_pull import (  # noqa: E402
     DOLT_ALIASES,
     FLOAT_COLS,
+    NET_EXC,
     fetch_date,
     in_list,
     load_universe,
@@ -35,6 +36,12 @@ from dolthub_iv_pull import (  # noqa: E402
 
 DEFAULT_DAYS_BACK = 10
 DEFAULT_OUT = REPO_ROOT / "state" / "ghost" / "iv_live.pkl"
+
+
+class DoltHubUnavailable(Exception):
+    """Raised when DoltHub is unreachable, returns malformed/empty data, or fails coverage."""
+    pass
+
 
 
 def load_holidays(path: Path) -> set[str]:
@@ -187,57 +194,64 @@ def main() -> None:
     today_ny = datetime.datetime.now(ZoneInfo("America/New_York")).date()
     holidays = load_holidays(REPO_ROOT / "us-market-holidays.txt")
     sessions = get_recent_trading_sessions(today_ny, args.days_back, holidays)
-    print(
-        f"fetch_iv_live: universe={len(universe)}, fetching {len(sessions)} sessions [{sessions[0]} .. {sessions[-1]}]"
-    )
+    marker_path = out_path.parent / "iv_fallback_active"
 
-    from concurrent.futures import ThreadPoolExecutor
+    try:
+        from concurrent.futures import ThreadPoolExecutor
 
-    results_by_date: Dict[str, Dict[str, Any]] = {}
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        future_to_date = {executor.submit(fetch_date, dt, inl): dt for dt in sessions}
-        for fut in future_to_date:
-            dt = future_to_date[fut]
-            results_by_date[dt] = fut.result()
+        results_by_date: Dict[str, Dict[str, Any]] = {}
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            future_to_date = {executor.submit(fetch_date, dt, inl): dt for dt in sessions}
+            for fut in future_to_date:
+                dt = future_to_date[fut]
+                results_by_date[dt] = fut.result()
 
-    # Fail-closed checks on newest requested date
-    newest_date = sessions[-1]
-    newest_res = results_by_date[newest_date]
-    if newest_res.get("rows") is None:
-        sys.stderr.write(
-            f"ERROR: Most recent requested date {newest_date} failed to fetch after retries: {newest_res.get('error')}\n"
-        )
-        sys.exit(1)
+        # Fail-closed checks on newest requested date
+        newest_date = sessions[-1]
+        newest_res = results_by_date[newest_date]
+        if newest_res.get("rows") is None:
+            raise DoltHubUnavailable(
+                f"ERROR: Most recent requested date {newest_date} failed to fetch after retries: {newest_res.get('error')}"
+            )
 
-    newest_valid = count_valid_symbols(newest_res["rows"], universe_set)
-    valid_threshold = 0.50 * len(universe)
-    if newest_valid < valid_threshold:
-        sys.stderr.write(
-            f"ERROR: Most recent requested date {newest_date} has only {newest_valid}/{len(universe)} "
-            f"valid IV/HV tickers (< 50% threshold of {valid_threshold:.0f})\n"
-        )
-        sys.exit(1)
+        newest_valid = count_valid_symbols(newest_res["rows"], universe_set)
+        valid_threshold = 0.50 * len(universe)
+        if newest_valid < valid_threshold:
+            raise DoltHubUnavailable(
+                f"ERROR: Most recent requested date {newest_date} has only {newest_valid}/{len(universe)} "
+                f"valid IV/HV tickers (< 50% threshold of {valid_threshold:.0f})"
+            )
 
-    # Collect successful rows and metadata
-    all_rows: List[Dict[str, Any]] = []
-    dates_covered: List[str] = []
-    rows_per_date: Dict[str, int] = {}
-    valid_per_date: Dict[str, int] = {}
+        # Collect successful rows and metadata
+        all_rows: List[Dict[str, Any]] = []
+        dates_covered: List[str] = []
+        rows_per_date: Dict[str, int] = {}
+        valid_per_date: Dict[str, int] = {}
 
-    for dt in sessions:
-        res = results_by_date[dt]
-        rows = res.get("rows")
-        if rows is not None and len(rows) > 0:
-            dates_covered.append(dt)
-            rows_per_date[dt] = len(rows)
-            valid_per_date[dt] = count_valid_symbols(rows, universe_set)
-            all_rows.extend(rows)
-        else:
-            rows_per_date[dt] = 0
-            valid_per_date[dt] = 0
+        for dt in sessions:
+            res = results_by_date[dt]
+            rows = res.get("rows")
+            if rows is not None and len(rows) > 0:
+                dates_covered.append(dt)
+                rows_per_date[dt] = len(rows)
+                valid_per_date[dt] = count_valid_symbols(rows, universe_set)
+                all_rows.extend(rows)
+            else:
+                rows_per_date[dt] = 0
+                valid_per_date[dt] = 0
 
-    # Build cache structure
-    cache = build_cache_dataframe(all_rows, universe)
+        # Build cache structure
+        cache = build_cache_dataframe(all_rows, universe)
+        if not cache:
+            raise DoltHubUnavailable("Built cache is empty (zero valid rows across all sessions)")
+
+    except (DoltHubUnavailable,) + NET_EXC as exc:
+        reason = str(exc)
+        sys.stderr.write(f"DoltHub API unavailable, triggering fallback: {reason}\n")
+        sys.stderr.flush()
+        marker_path.parent.mkdir(parents=True, exist_ok=True)
+        marker_path.touch()
+        sys.exit(0)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     # Atomic replace: this cache is read daily by ghost_prescreen_v2.py, which
@@ -260,6 +274,8 @@ def main() -> None:
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
 
+    marker_path.unlink(missing_ok=True)
+
     print(
         f"Wrote {len(cache)} symbols to {out_path} ({len(dates_covered)} dates covered, latest {newest_date}: {newest_valid} valid tickers)"
     )
@@ -267,6 +283,7 @@ def main() -> None:
 
     if args.self_test:
         run_self_test(out_path)
+
 
 
 if __name__ == "__main__":
