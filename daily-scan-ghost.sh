@@ -55,6 +55,16 @@ ERR_FILE="$LOG_DIR/${TODAY}_daily-scan-ghost-stderr.log"
 on_err() {
   local ec=$?
   trap - ERR
+  # Close out both files so a failure is legible from disk alone, not only
+  # via notify/Telegram (2026-09-24 incident: a timeout-killed fetch_iv_live
+  # left $ERR_FILE ending mid-retry with no closing line and no $LOG_FILE at
+  # all -- investigation from the logs looked like silent death even though
+  # this trap was firing the whole time).
+  echo "[$(date -u '+%Y-%m-%d %H:%M:%S UTC')] ABORTED: exit $ec — run did not complete" >>"$ERR_FILE"
+  if [ ! -s "$LOG_FILE" ]; then
+    printf '# ARIA Ghost System — %s\n_Run %s_\n\nABORTED: exit %s — see %s\n' \
+      "$TODAY" "$RUN_TS" "$ec" "$ERR_FILE" >"$LOG_FILE"
+  fi
   notify "ARIA Ghost System FAILED" "exit $ec — see $ERR_FILE"
   send_telegram "ARIA Ghost System FAILED — ${TODAY}. See $ERR_FILE." || true
   exit "$ec"
@@ -97,7 +107,12 @@ cd "$ARIA_HOME"
 # the newest session's valid-symbol coverage drops below 50% of the universe,
 # so a real DoltHub problem here aborts the whole scan via the existing ERR
 # trap rather than silently reproducing the same stale-cache failure.
-timeout 3m "$ARIA_HOME/scripts/backtest/.venv/bin/python3" \
+# Budget widened 3m -> 8m 2026-09-30: DoltHub's own worst-case retry math
+# (dolthub_iv_pull.MAX_ATTEMPTS=6, BACKOFF up to 48s between attempts) can
+# exceed 3 minutes on a single flaky date with WORKERS=2 pulling 10 dates in
+# parallel; 3m was observed killing a genuinely-in-progress retry sequence
+# mid-flight (2026-09-24 IncompleteRead incident) rather than a hung one.
+timeout 8m "$ARIA_HOME/scripts/backtest/.venv/bin/python3" \
   "$ARIA_HOME/scripts/ghost/fetch_iv_live.py" --out "$STATE_DIR/ghost/iv_live.pkl" \
   >>"$ERR_FILE" 2>&1
 echo "[$RUN_TS] IV cache refreshed -> $STATE_DIR/ghost/iv_live.pkl" >>"$ERR_FILE"
