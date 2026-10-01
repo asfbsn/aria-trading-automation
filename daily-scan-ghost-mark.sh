@@ -15,9 +15,12 @@ PROMPT_FILE="$ARIA_HOME/prompts/bull-put-spread-ghost-mark.md"
 LOCK_FILE="$STATE_DIR/daily-scan-ghost-mark.lock"
 CLAUDE_BIN="${CLAUDE_BIN:-claude}"
 CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-4-8}"
+# NOTE: Read/Edit path rules must start with "/" + the absolute path (=> "//home/...") to be ABSOLUTE; a bare
+# "/home/..." is resolved relative to the project root and never matches (first real mark run 2026-10-01: every
+# scratch write and logger call was denied). daily-scan-ghost.sh uses the same form.
 readonly GHOST_MARK_ALLOWED_TOOLS="\
-Read(${ARIA_HOME}/state/scratch/ghost_open_positions_*.json),\
-Edit(${ARIA_HOME}/state/scratch/ghost_mark_*.json),\
+Read(/${ARIA_HOME}/state/scratch/ghost_open_positions_*.json),\
+Edit(/${ARIA_HOME}/state/scratch/ghost_mark_*.json),\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_price_snapshot,\
 Bash(${ARIA_HOME}/scripts/backtest/.venv/bin/python3 ${ARIA_HOME}/scripts/ghost/ghost_exit_logger.py --input:*),\
 Bash(${ARIA_HOME}/scripts/backtest/.venv/bin/python3 scripts/ghost/ghost_exit_logger.py --input:*),\
@@ -109,6 +112,10 @@ if [ "${FORCE_RUN:-false}" != "true" ]; then
 fi
 
 cd "$ARIA_HOME"
+# Stale per-position mark files from earlier runs (e.g. 2026-09-18) must not be replayable: on 2026-10-01 a
+# session that could not write a fresh file ran the logger on an old one and wrote a junk row to the raw ledger.
+mkdir -p "$STATE_DIR/scratch/ghost_mark_archive"
+find "$STATE_DIR/scratch" -maxdepth 1 -name 'ghost_mark_*.json' -exec mv --backup=numbered -t "$STATE_DIR/scratch/ghost_mark_archive" {} + 2>>"$ERR_FILE" || true
 # Fetch real settled closes for current open positions via yfinance.
 # Settled closes reflect the last completed trading session (yesterday's close),
 # serving as lagged structural check evidence, kept explicitly separate from today's
