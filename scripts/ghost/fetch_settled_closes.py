@@ -28,6 +28,8 @@ sys.path.insert(0, str(REPO_ROOT))
 from scripts.ghost.ghost_exit_logger import open_candidate_ids
 
 DEFAULT_OUT = REPO_ROOT / "state" / "ghost" / "settled_closes.json"
+DEFAULT_BARS_OUT = REPO_ROOT / "state" / "ghost" / "settled_bars.json"
+SETTLED_BARS_N = 220  # >= compute_exit_signal_v2.MIN_BARS (155) plus EMA/RSI warm-up margin
 
 
 def load_holidays(path: Path) -> Set[str]:
@@ -135,6 +137,86 @@ def fetch_settled_close_for_ticker(
     }, None
 
 
+def settled_bars_from_history(
+    hist: "pd.DataFrame",
+    last_completed_session: str,
+    n_bars: int = SETTLED_BARS_N,
+) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str]]:
+    """Pure helper: settled daily OHLCV bars (date <= last_completed_session) from a yfinance history frame.
+
+    Same structural exclusion as the settled-close fetch: any bar dated after the last completed session
+    (future/forward-fill dummy rows, today's unfinished bar) is dropped, the latest remaining bar must BE the
+    last completed session, and rows with non-finite/non-positive OHLC are dropped (not repaired).
+    """
+    if hist is None or hist.empty:
+        return None, "empty_history"
+    for col in ("Open", "High", "Low", "Close", "Volume"):
+        if col not in hist.columns:
+            return None, f"missing_{col.lower()}_column"
+    bars: List[Dict[str, Any]] = []
+    for ts, row in hist.iterrows():
+        if hasattr(ts, "tzinfo") and ts.tzinfo is not None:
+            d = ts.tz_convert("America/New_York").strftime("%Y-%m-%d")
+        else:
+            d = ts.strftime("%Y-%m-%d")
+        if d > last_completed_session:
+            continue
+        try:
+            o, h, l, c = (float(row["Open"]), float(row["High"]), float(row["Low"]), float(row["Close"]))
+            v = float(row["Volume"]) if math.isfinite(float(row["Volume"])) else 0.0
+        except (TypeError, ValueError):
+            continue
+        if not all(math.isfinite(x) and x > 0 for x in (o, h, l, c)):
+            continue
+        bars.append({"date": d, "open": round(o, 4), "high": round(h, 4), "low": round(l, 4),
+                     "close": round(c, 4), "volume": v})
+    if not bars:
+        return None, f"no_bars_on_or_before_{last_completed_session}"
+    if bars[-1]["date"] != last_completed_session:
+        return None, f"target_session_{last_completed_session}_missing_latest_was_{bars[-1]['date']}"
+    return bars[-n_bars:], None
+
+
+def fetch_settled_bars_for_ticker(
+    ticker: str,
+    last_completed_session: str,
+    retrieval_ts: str,
+    n_bars: int = SETTLED_BARS_N,
+) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Settled daily bars for one ticker. auto_adjust=False on purpose: IBKR's bars (which the live exit
+    guard uses) are unadjusted, so an adjusted series would drift the MA150/RSI checks away from live."""
+    try:
+        hist = yf.Ticker(ticker).history(period="450d", interval="1d", auto_adjust=False)
+    except Exception as err:
+        return None, f"yfinance_exception: {err}"
+    bars, err = settled_bars_from_history(hist, last_completed_session, n_bars)
+    if bars is None:
+        return None, err
+    return {
+        "ticker": ticker,
+        "session_date": last_completed_session,
+        "bars": bars,
+        "source": "yfinance",
+        "retrieved_ts_utc": retrieval_ts,
+    }, None
+
+
+def fetch_all_settled_bars(
+    tickers: List[str],
+    last_completed_session: str,
+) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, str]]:
+    out: Dict[str, Dict[str, Any]] = {}
+    failures: Dict[str, str] = {}
+    retrieval_ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    for ticker in tickers:
+        entry, err = fetch_settled_bars_for_ticker(ticker, last_completed_session, retrieval_ts)
+        if entry is not None:
+            out[ticker] = entry
+        else:
+            failures[ticker] = err or "unknown_error"
+    return out, failures
+
+
 def fetch_all_settled_closes(
     tickers: List[str],
     last_completed_session: str,
@@ -205,6 +287,23 @@ def run_self_test() -> None:
     assert filtered.index[-1].strftime("%Y-%m-%d") == "2026-09-17"
     assert filtered["Close"].iloc[-1] == 102.0
     print("PASS: synthetic bar date > last_completed_session structural exclusion")
+
+    # settled_bars_from_history: future row excluded, NaN row dropped, latest must be the session, tail-trimmed
+    idx = pd.to_datetime([f"2026-09-{d:02d} 00:00:00-04:00" for d in (14, 15, 16, 17, 18)])
+    hist = pd.DataFrame(
+        {"Open": [100.0, 101.0, float("nan"), 103.0, 104.0], "High": [101.0] * 5, "Low": [99.0] * 5,
+         "Close": [100.5, 101.5, 102.5, 103.5, 104.5], "Volume": [10, 10, 10, 10, 0]},
+        index=idx,
+    )
+    bars, err = settled_bars_from_history(hist, "2026-09-17")
+    assert err is None and [b["date"] for b in bars] == ["2026-09-14", "2026-09-15", "2026-09-17"], (bars, err)
+    assert all(b["date"] <= "2026-09-17" for b in bars), "bar after the session leaked"
+    bars2, err2 = settled_bars_from_history(hist, "2026-09-16")
+    assert bars2 is None and err2.startswith("target_session_2026-09-16_missing_latest_was_"), err2  # 09-16 row NaN-dropped
+    trimmed, _ = settled_bars_from_history(hist, "2026-09-17", n_bars=2)
+    assert [b["date"] for b in trimmed] == ["2026-09-15", "2026-09-17"]
+    assert settled_bars_from_history(pd.DataFrame(), "2026-09-17")[1] == "empty_history"
+    print("PASS: settled_bars_from_history exclusion / NaN-drop / latest-session / trim")
     print("ALL TESTS PASSED")
 
 
@@ -215,6 +314,12 @@ def main() -> int:
         type=str,
         default=str(DEFAULT_OUT),
         help=f"Path to output JSON (default: {DEFAULT_OUT})",
+    )
+    parser.add_argument(
+        "--bars-out",
+        type=str,
+        default=None,
+        help=f"Path to settled daily bars JSON (default: <out dir>/settled_bars.json; repo default {DEFAULT_BARS_OUT})",
     )
     parser.add_argument(
         "--state-dir",
@@ -312,6 +417,24 @@ def main() -> int:
     else:
         print(f"Dated archive already exists, preserved: {dated_path}")
 
+    # Settled daily bars (informational bar-based exit checks). Never allowed to affect the closes file above or
+    # the exit code: a bars failure just means the logger falls back to bars=[] (insufficient_data) as before.
+    bars_out_path = Path(args.bars_out).resolve() if args.bars_out else out_path.parent / "settled_bars.json"
+    settled_bars: Dict[str, Any] = {}
+    bars_failures: Dict[str, str] = {}
+    try:
+        if tickers:
+            settled_bars, bars_failures = fetch_all_settled_bars(tickers, last_completed_session)
+        tmp_bars = bars_out_path.with_suffix(bars_out_path.suffix + f".tmp{os.getpid()}")
+        with open(tmp_bars, "w", encoding="utf-8") as f:
+            json.dump(settled_bars, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_bars, bars_out_path)
+    except Exception as err:  # noqa: BLE001
+        print(f"WARNING: settled bars fetch/write failed ({err}); bar-based checks will be unmeasured")
+        settled_bars, bars_failures = {}, {t: f"bars_stage_exception: {err}" for t in tickers}
+
     fetch_ts = datetime.datetime.now(datetime.timezone.utc).isoformat()
     meta = {
         "fetch_ts": fetch_ts,
@@ -321,6 +444,9 @@ def main() -> int:
         "tickers_requested": tickers,
         "tickers_covered": sorted(list(settled_closes.keys())),
         "tickers_failed": failures,
+        "bars_covered": sorted(list(settled_bars.keys())),
+        "bars_failed": bars_failures,
+        "bars_n_target": SETTLED_BARS_N,
     }
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
@@ -331,6 +457,9 @@ def main() -> int:
     )
     if failures:
         print(f"Failures: {failures}")
+    print(f"Wrote settled bars for {len(settled_bars)}/{len(tickers)} tickers to {bars_out_path}")
+    if bars_failures:
+        print(f"Bars failures: {bars_failures}")
     return 0
 
 

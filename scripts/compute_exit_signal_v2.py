@@ -426,8 +426,15 @@ def evaluate_profit_target_and_time_stop(
 def get_expected_last_completed_session(
     ref_date_str: Optional[str] = None,
     holidays_file: Optional[Path] = None,
+    now_ny: Optional[datetime.datetime] = None,
 ) -> str:
-    """Calculate the expected last completed trading session prior to ref_date."""
+    """Calculate the expected last completed trading session prior to ref_date.
+
+    Time-aware like scripts/ghost/fetch_settled_closes.get_last_completed_session: when ref_date is TODAY in
+    America/New_York and it is already 16:00 ET or later, today's session has settled and IS the last completed
+    session. (Previously this always returned ref_date - 1, so any forced mark run after the close made
+    validate_settled_close reject a perfectly good same-day settled close as `synthetic_or_future_date_rejected`.)
+    For any other ref_date (all historical replays, and every normal 15:30-15:59 ET mark run) behavior is unchanged."""
     if holidays_file is None:
         holidays_file = _HERE.parent / "us-market-holidays.txt"
     holidays = set()
@@ -449,7 +456,13 @@ def get_expected_last_completed_session(
         from zoneinfo import ZoneInfo
         ref_date = datetime.datetime.now(ZoneInfo("America/New_York")).date()
 
-    cur = ref_date - datetime.timedelta(days=1)
+    from zoneinfo import ZoneInfo
+    if now_ny is None:
+        now_ny = datetime.datetime.now(ZoneInfo("America/New_York"))
+    if ref_date == now_ny.date() and now_ny.time() >= datetime.time(16, 0):
+        cur = ref_date
+    else:
+        cur = ref_date - datetime.timedelta(days=1)
     while True:
         if cur.weekday() < 5 and cur.isoformat() not in holidays:
             return cur.isoformat()

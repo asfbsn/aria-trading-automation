@@ -7,12 +7,17 @@ imports signal_core and live GEX resolution uses dix_fetcher_v2, requiring
 pandas. Real runs omit gex_regime and let the engine fetch its own live regime.
 This logger never fetches IBKR quotes/history or places orders.
 
-Passing bars=[] ALWAYS selects the engine's insufficient_data=True branch.
-Profit target, time stop and POSITIVE-regime premium stop need no bars and
-remain evaluated. The NEGATIVE-regime structural short-strike-breach stop is
-NOT evaluated: it needs settled OHLCV bars, which this logger never fetches,
-avoiding a new get_price_history IBKR grant. This is a real scope limitation;
-a mark does not establish that the structural thesis is intact.
+Passing bars=[] selects the engine's insufficient_data=True branch. Profit
+target, time stop and POSITIVE-regime premium stop need no bars. When
+state/ghost/settled_bars.json (written by fetch_settled_closes.py) holds
+settled daily bars for the expected last completed session, they are passed
+with exclude_last_bar=True and the MA150/RSI/candle checks are persisted on
+every row (informational). In NEGATIVE regime the validated settled_close
+record is authoritative; only when it is missing/stale/invalid does the engine
+fall back to the bars-derived short-strike check (structural_source=
+bars_fallback) -- the same rule the live exit guard applies to IBKR bars.
+Such a row reads structural_unknown=True with thesis_invalidated_by=
+structural_breach: structural_source is what disambiguates it.
 
 All prices/P&L are option quote dollars per share, including realized_pnl_mid
 (a paper mid-price estimate, not an execution). Both quote timestamps must be
@@ -40,7 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from scripts.ghost.ghost_fill_logger import (
     ROOT, rows, append, in_regular_hours, quote_time, QUOTE_SKEW_MAX_SECONDS,
 )
-from scripts.compute_exit_signal_v2 import compute_exit_signal_v2
+from scripts.compute_exit_signal_v2 import compute_exit_signal_v2, get_expected_last_completed_session
 
 # Structural-evidence fields (Astra, 2026-09-19): without these, a `marked`
 # row with no breach is indistinguishable from one where the structural check
@@ -48,7 +53,10 @@ from scripts.compute_exit_signal_v2 import compute_exit_signal_v2
 # the same on-disk row. Persisted on every mark/exit row, not just computed.
 STRUCTURAL_FIELDS = '''thesis_invalidated_by structural_evaluated structural_breached
 structural_unknown structural_reason settled_close_used settled_close_session_date
-settled_close_source settled_close_retrieved_ts_utc'''.split()
+settled_close_source settled_close_retrieved_ts_utc
+structural_source bars_status bars_provided bar_close bar_rsi20 bar_ma150
+check_short_strike_breached check_broke_ma150_support check_bearish_candle
+check_rsi_overbought check_volume_confirmed_breakdown'''.split()
 MARK_FIELDS = '''run_id mark_date candidate_id ticker dte short_mid long_mid
 cost_to_close_mid cost_to_close_natural displayed_crossing_cost_per_leg_close
 unrealized_pnl_mid pct_max_profit_captured regime regime_data_available
@@ -78,6 +86,43 @@ def ensure_header(path, fields):
     else:
         with path.open('w', newline='', encoding='utf-8') as handle:
             csv.writer(handle).writerow(fields)
+
+
+BAR_KEYS = ('date', 'open', 'high', 'low', 'close', 'volume')
+
+
+def usable_bars(record, mark_date, ticker=None):
+    """Settled bars for the engine, or [] with a reason: ok | missing | stale | malformed.
+
+    stale = the bars' session is not the expected last completed session for mark_date (e.g. yesterday's fetch).
+    Bars are INFORMATIONAL evidence (MA150/RSI/candle checks) -- see structural_source for how they can matter.
+    Numeric validation happens HERE so a bad producer file can never raise out of log_observation before the
+    raw audit row is written."""
+    if record is None:
+        return [], 'missing'
+    if not isinstance(record, dict) or not isinstance(record.get('bars'), list) or not record['bars']:
+        return [], 'malformed'
+    if ticker is not None and str(record.get('ticker', '')).strip().upper() != str(ticker).strip().upper():
+        return [], 'malformed'
+    try:
+        expected = get_expected_last_completed_session(mark_date)
+    except Exception:  # noqa: BLE001
+        return [], 'malformed'
+    if record.get('session_date') != expected:
+        return [], 'stale'
+    bars = record['bars']
+    for bar in bars:
+        if not isinstance(bar, dict) or any(key not in bar for key in BAR_KEYS):
+            return [], 'malformed'
+        try:
+            o, h, l, c, v = (float(bar[k]) for k in ('open', 'high', 'low', 'close', 'volume'))
+        except (TypeError, ValueError):
+            return [], 'malformed'
+        if not all(math.isfinite(x) and x > 0 for x in (o, h, l, c)) or not math.isfinite(v) or v < 0:
+            return [], 'malformed'
+    if str(bars[-1]['date'])[:10] != expected:
+        return [], 'malformed'
+    return bars, 'ok'
 
 
 def validate(data, holiday_text):
@@ -192,14 +237,28 @@ def log_observation(raw_bytes, state_dir, holiday_text):
                         except Exception:
                             settled_close = None
 
+                settled_bars_rec = data.get('settled_bars')
+                if settled_bars_rec is None:
+                    sb_file = state_dir / 'settled_bars.json'
+                    if sb_file.exists():
+                        try:
+                            sb_map = json.loads(sb_file.read_text(encoding='utf-8'))
+                            if isinstance(sb_map, dict):
+                                settled_bars_rec = sb_map.get(entry['ticker'])
+                        except Exception:
+                            settled_bars_rec = None
+                bars, bars_status = usable_bars(settled_bars_rec, data['mark_date'], entry['ticker'])
+
                 signal_payload = {
-                    'ticker': entry['ticker'], 'bars': [], 'initial_credit': credit,
+                    'ticker': entry['ticker'], 'bars': bars, 'initial_credit': credit,
                     'entry_date': entry['trade_date'], 'mark_date': data['mark_date'],
                     'contracts': 1, 'current_mark': mid, 'dte': dte,
                     'short_strike': float(entry['resolved_short_strike']),
                     'settled_close': settled_close,
                 }
-                signal = compute_exit_signal_v2(signal_payload)
+                # exclude_last_bar=True is belt-and-braces: the engine only drops the last bar when it is dated
+                # today and before 16:00 ET, which settled-only bars never are.
+                signal = compute_exit_signal_v2(signal_payload, exclude_last_bar=True)
                 effective_settled_close_json = json.dumps(settled_close) if settled_close is not None else ''
                 # Persist the structural evidence itself, not just its effect on
                 # hard_close/exit_reason -- otherwise a `marked` row with no
@@ -217,6 +276,28 @@ def log_observation(raw_bytes, state_dir, holiday_text):
                     'settled_close_source': settled_close.get('source') if isinstance(settled_close, dict) else None,
                     'settled_close_retrieved_ts_utc': settled_close.get('retrieved_ts_utc') if isinstance(settled_close, dict) else None,
                 }
+                # Where the structural verdict came from. `bars_fallback` = NEGATIVE regime, no valid settled_close,
+                # decided by the bar-derived short-strike check; such an exit shows thesis_invalidated_by=
+                # structural_breach together with structural_evaluated=False (settled_close not evaluated).
+                insufficient = bool(signal.get('insufficient_data'))
+                checks = {} if insufficient else (signal.get('checks') or {})
+                if struct_eval.get('evaluated'):
+                    structural_source = 'settled_close'
+                elif signal.get('regime') == 'NEGATIVE' and not insufficient:
+                    structural_source = 'bars_fallback'
+                else:
+                    structural_source = 'none'
+                structural_row.update(
+                    structural_source=structural_source, bars_status=bars_status,
+                    bars_provided=signal.get('bars_provided', len(bars)),
+                    bar_close='' if insufficient else signal.get('close'),
+                    bar_rsi20='' if insufficient else signal.get('rsi20'),
+                    bar_ma150='' if insufficient else signal.get('ma150'),
+                    check_short_strike_breached=checks.get('short_strike_breached', ''),
+                    check_broke_ma150_support=checks.get('broke_ma150_support', ''),
+                    check_bearish_candle=checks.get('bearish_candle', ''),
+                    check_rsi_overbought=checks.get('rsi_overbought', ''),
+                    check_volume_confirmed_breakdown=checks.get('volume_confirmed_breakdown', ''))
                 row = {**data, **values, **structural_row, 'ticker': entry['ticker'],
                        'regime': signal['regime'],
                        'regime_data_available': signal['regime_detail']['data_available']}
@@ -294,7 +375,7 @@ def self_test():
                    dict(candidate_id=candidate, ticker='TEST', trade_date='2026-09-16',
                         credit_mid=2, resolved_expiry=expiry, resolved_short_strike=100))
 
-        def record(state, data=None):
+        def record(state, data=None, bars=False):
             data = base if data is None else data
             raw_bytes = json.dumps(data, indent=2).encode()
             before = len(rows(state / 'ghost_mark_observations_raw.csv'))
@@ -304,10 +385,24 @@ def self_test():
             assert audit[-1]['input_json'] == raw_bytes.decode()
             assert audit[-1]['outcome'] == result['outcome']
             assert audit[-1]['reason'] == result['reason']
-            if 'signal' in result:
+            if 'signal' in result and not bars:
                 assert result['signal']['insufficient_data'] is True
                 assert result['signal']['bars_provided'] == 0
             return result
+
+        def write_bars(state, session='2026-09-16', last_close=100.0, n=160, ticker='TEST', last_date=None):
+            from datetime import timedelta
+            end = date.fromisoformat(session)
+            out = []
+            for i in range(n):
+                d = (end - timedelta(days=n - 1 - i)).isoformat()
+                c = 100.0 if i < n - 1 else last_close
+                out.append({'date': d, 'open': c, 'high': c + 1, 'low': c - 1, 'close': c, 'volume': 1000})
+            if last_date:
+                out[-1]['date'] = last_date
+            (state / 'settled_bars.json').write_text(json.dumps(
+                {ticker: {'ticker': ticker, 'session_date': session, 'bars': out,
+                          'source': 'yfinance', 'retrieved_ts_utc': '2026-09-17T12:00:00Z'}}))
 
         def healthy(state):
             result = record(state)
@@ -347,9 +442,9 @@ def self_test():
 
         def premium(state):
             engine = compute_exit_signal_v2
-            def positive(payload):
+            def positive(payload, **kwargs):
                 assert 'gex_regime' not in payload
-                return engine({**payload, 'gex_regime': {'regime': 'POSITIVE', 'data_available': True}})
+                return engine({**payload, 'gex_regime': {'regime': 'POSITIVE', 'data_available': True}}, **kwargs)
             # Only this test injects gex_regime, directly into the engine payload.
             with patch.dict(log_observation.__globals__, compute_exit_signal_v2=positive):
                 result = close_case(state, 'premium_stop', {**base, 'short_bid': 7.9, 'short_ask': 8.1})
@@ -649,8 +744,105 @@ def self_test():
             assert result['signal']['structural_evaluation']['breached'] is True
             assert result['signal']['thesis_invalidated_by'] == 'structural_breach'
 
+        SC_ABOVE = {'ticker': 'TEST', 'close': 105.0, 'session_date': '2026-09-16', 'source': 'yfinance',
+                    'retrieved_ts_utc': '2026-09-17T12:00:00Z'}
+
+        def bars_positive_regime_informational(state):
+            write_bars(state, last_close=105.0)
+            engine = compute_exit_signal_v2
+            def positive(payload, **kwargs):
+                return engine({**payload, 'gex_regime': {'regime': 'POSITIVE', 'data_available': True}}, **kwargs)
+            with patch.dict(log_observation.__globals__, compute_exit_signal_v2=positive):
+                result = record(state, bars=True)
+            assert result['outcome'] == 'marked' and result['hard_close'] is False
+            assert result['signal']['insufficient_data'] is False
+            row = rows(state / 'ghost_marks.csv')[0]
+            assert row['bars_status'] == 'ok' and row['bars_provided'] == '160'
+            assert row['structural_source'] == 'none'
+            assert row['check_broke_ma150_support'] == 'False' and row['check_bearish_candle'] == 'False'
+            assert math.isclose(float(row['bar_close']), 105.0) and row['bar_ma150'] != '' and row['bar_rsi20'] != ''
+
+        def bars_negative_fallback_breach(state):
+            write_bars(state, last_close=95.0)           # settled close below the 100 short strike, no settled_close record
+            result = record(state, bars=True)
+            assert result['outcome'] == 'exited' and result['exit_reason'] == 'structural_breach'
+            row = rows(state / 'ghost_exits.csv')[0]
+            assert row['thesis_invalidated_by'] == 'structural_breach'
+            assert row['structural_evaluated'] == 'False' and row['structural_source'] == 'bars_fallback'
+            assert row['bars_status'] == 'ok' and row['check_short_strike_breached'] == 'True'
+
+        def bars_do_not_override_settled_close(state):
+            write_bars(state, last_close=95.0)
+            result = record(state, {**base, 'settled_close': SC_ABOVE}, bars=True)
+            assert result['outcome'] == 'marked' and result['hard_close'] is False
+            row = rows(state / 'ghost_marks.csv')[0]
+            assert row['structural_source'] == 'settled_close' and row['structural_evaluated'] == 'True'
+            assert row['structural_breached'] == 'False'
+
+        def bars_stale_ignored(state):
+            write_bars(state, session='2026-09-10')
+            result = record(state)                       # bars=False: engine must still see NO bars
+            assert result['outcome'] == 'marked' and result['signal']['insufficient_data'] is True
+            row = rows(state / 'ghost_marks.csv')[0]
+            assert row['bars_status'] == 'stale' and row['bars_provided'] == '0' and row['structural_source'] == 'none'
+            assert row['check_broke_ma150_support'] == '' and row['bar_close'] == ''
+
+        def bars_malformed_ignored(state):
+            write_bars(state, last_date='2026-09-12')    # last bar date != claimed session
+            result = record(state)
+            assert result['signal']['insufficient_data'] is True
+            assert rows(state / 'ghost_marks.csv')[0]['bars_status'] == 'malformed'
+
+        def bad_bars_case(label, mutate):
+            def run(state):
+                write_bars(state)
+                data = json.loads((state / 'settled_bars.json').read_text())
+                mutate(data['TEST'])
+                (state / 'settled_bars.json').write_text(json.dumps(data))
+                result = record(state)
+                assert result['outcome'] == 'marked', (label, result)
+                assert result['signal']['insufficient_data'] is True, label
+                last = rows(state / 'ghost_marks.csv')[-1]
+                assert last['bars_status'] == 'malformed' and last['bars_provided'] == '0', (label, last['bars_status'])
+                assert len(rows(state / 'ghost_mark_observations_raw.csv')) == 1, label   # raw audit row written
+            return run
+
+        def bars_missing_status(state):
+            record(state)
+            row = rows(state / 'ghost_marks.csv')[0]
+            assert row['bars_status'] == 'missing' and row['bars_provided'] == '0' and row['structural_source'] == 'none'
+
+        def bars_short_series_insufficient(state):
+            write_bars(state, n=100)                     # valid session but < MIN_BARS -> engine says insufficient
+            result = record(state, bars=True)
+            assert result['signal']['insufficient_data'] is True and result['signal']['bars_provided'] == 100
+            assert rows(state / 'ghost_marks.csv')[0]['bars_status'] == 'ok'
+
+        def expected_session_time_aware(state):
+            from datetime import datetime as _dt
+            ny = ZoneInfo('America/New_York')
+            fri_after = _dt(2026, 9, 18, 16, 30, tzinfo=ny)
+            fri_mid = _dt(2026, 9, 18, 15, 45, tzinfo=ny)
+            assert get_expected_last_completed_session('2026-09-18', now_ny=fri_after) == '2026-09-18'
+            assert get_expected_last_completed_session('2026-09-18', now_ny=fri_mid) == '2026-09-17'
+            assert get_expected_last_completed_session('2026-09-17', now_ny=fri_after) == '2026-09-16'   # not today: unchanged
+            sat_after = _dt(2026, 9, 19, 17, 0, tzinfo=ny)
+            assert get_expected_last_completed_session('2026-09-19', now_ny=sat_after) == '2026-09-18'   # weekend rolls back
+
         cases = [
             ('healthy mark arithmetic and offline regime fail-safe', healthy, '2026-10-16'),
+            ('bars: POSITIVE regime persists informational checks, no behavior change', bars_positive_regime_informational, '2026-10-16'),
+            ('bars: NEGATIVE regime without settled_close exits via bars_fallback with explicit source', bars_negative_fallback_breach, '2026-10-16'),
+            ('bars: valid settled_close stays authoritative over bars', bars_do_not_override_settled_close, '2026-10-16'),
+            ('bars: stale bars ignored (engine sees none)', bars_stale_ignored, '2026-10-16'),
+            ('bars: malformed bars ignored', bars_malformed_ignored, '2026-10-16'),
+            ('bars: non-numeric close recorded malformed, never raises', bad_bars_case('close', lambda r: r['bars'][5].__setitem__('close', 'abc')), '2026-10-16'),
+            ('bars: volume None recorded malformed, never raises', bad_bars_case('volume', lambda r: r['bars'][5].__setitem__('volume', None)), '2026-10-16'),
+            ('bars: negative price recorded malformed', bad_bars_case('neg', lambda r: r['bars'][5].__setitem__('low', -1.0)), '2026-10-16'),
+            ('bars: inner ticker mismatch recorded malformed', bad_bars_case('ticker', lambda r: r.__setitem__('ticker', 'OTHER')), '2026-10-16'),
+            ('bars: missing file recorded as missing', bars_missing_status, '2026-10-16'),
+            ('bars: fewer than MIN_BARS stays insufficient_data', bars_short_series_insufficient, '2026-10-16'),
+            ('engine expected session is time-aware after 16:00 ET', expected_session_time_aware, '2026-10-16'),
             ('profit-target exit', profit, '2026-10-16'),
             ('time-stop exit at DTE 7', lambda s: close_case(s, 'time_stop'), '2026-09-24'),
             ('time-stop exit at DTE 0', lambda s: close_case(s, 'time_stop'), '2026-09-17'),
