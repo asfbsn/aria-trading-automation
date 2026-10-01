@@ -61,14 +61,22 @@ ERR_FILE="$LOG_DIR/${TODAY}_daily-scan-ghost-mark-stderr.log"
 on_err() {
   local ec=$?
   trap - ERR
+  local why
+  why="$(tail -n 8 "$ERR_FILE" 2>/dev/null | tr '\r' '\n' | awk '!/%/ && NF' | tail -n 3 | tr '\n' '|' | head -c 300)"
   notify "ARIA Ghost System (Marks) FAILED" "exit $ec — see $ERR_FILE"
-  send_telegram "ARIA Ghost System (Marks) FAILED — ${TODAY}. See $ERR_FILE." || true
+  send_telegram "ARIA Ghost System (Marks) FAILED — ${TODAY} (exit $ec). Last log lines: ${why:-none}. See $ERR_FILE." || true
   exit "$ec"
 }
 trap on_err ERR
 exec 9>"$LOCK_FILE"
 if ! flock -n 9; then
   echo "[$RUN_TS] Another ghost mark run holds the lock; exiting." >>"$ERR_FILE"
+  exit 0
+fi
+# Redundant cron fires (the backup minute, or the other DST-offset hour) must be harmless: if today's
+# marks already completed, do nothing.
+if [ "${FORCE_RUN:-false}" != "true" ] && [ -f "$ERR_FILE" ] && grep -qF '] Done → ' "$ERR_FILE"; then
+  echo "[$RUN_TS] Already completed today; skip." >>"$ERR_FILE"
   exit 0
 fi
 
@@ -90,11 +98,12 @@ if [ "${FORCE_RUN:-false}" != "true" ]; then
     exit 0
   fi
   # 10#$(...) forces base-10 parsing — "0900" as a bare int is invalid octal.
-  # Target ET window: 15:45-15:59 America/New_York (end-of-day pricing within RTH).
+  # Target ET window: 15:30-15:59 America/New_York (end-of-day pricing within RTH; widened from 15:45
+  # because ~27 positions x 2 legs takes ~9 minutes of quote capture and must finish before the 16:00 close).
   # Matches the gtc-guard.sh/exit-guard.sh pattern to handle box cron CRON_TZ bug.
   NY_HHMM=$((10#$(TZ='America/New_York' date +%H%M)))
-  if [ "$NY_HHMM" -lt 1545 ] || [ "$NY_HHMM" -ge 1600 ]; then
-    echo "[$RUN_TS] Outside 15:45-15:59 America/New_York (NY time now: $NY_HHMM) — skip." >>"$ERR_FILE"
+  if [ "$NY_HHMM" -lt 1530 ] || [ "$NY_HHMM" -ge 1600 ]; then
+    echo "[$RUN_TS] Outside 15:30-15:59 America/New_York (NY time now: $NY_HHMM) — skip." >>"$ERR_FILE"
     exit 0
   fi
 fi
@@ -160,24 +169,59 @@ trap 'rm -f "$RUN_OUTPUT"' EXIT
 # Handle the pipeline failure explicitly before restoring the error trap.
 trap - ERR
 set +e
-printf '%s' "$PROMPT" | timeout "${CLAUDE_TIMEOUT:-15m}" "$CLAUDE_BIN" \
-  --print \
-  --model "$CLAUDE_MODEL" \
-  --permission-mode default \
-  --allowedTools "$GHOST_MARK_ALLOWED_TOOLS" \
-  --settings '{"enabledPlugins":{"claude-mem@thedotmack":false}}' \
-  >"$RUN_OUTPUT" 2>>"$ERR_FILE"
-CLAUDE_EC=${PIPESTATUS[1]}
+# The claude.ai IBKR connector connects asynchronously: a headless session can start with it still
+# "pending", so the model reports "no IBKR tools" and exits 0 having captured nothing (seen 2026-10-01 on the
+# IV capture runner). Retry a session that logged ZERO observations for this run. Do not switch CLAUDE_MODEL
+# to haiku: it overflows its context with the connector tool definitions.
+N_OPEN="$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$OPEN_POSITIONS_FILE" 2>>"$ERR_FILE")"
+N_OPEN="${N_OPEN:-0}"
+MARK_MAX_ATTEMPTS="${MARK_MAX_ATTEMPTS:-3}"
+case "$MARK_MAX_ATTEMPTS" in ''|*[!0-9]*) MARK_MAX_ATTEMPTS=3 ;; esac
+count_run_observations() {
+  "$ARIA_HOME/scripts/backtest/.venv/bin/python3" - "$RAW_BASELINE" "$RUN_ID" <<'PY'
+import sys
+from scripts.ghost.ghost_exit_logger import ROOT, rows
+base, rid = int(sys.argv[1]), sys.argv[2]
+print(sum(1 for r in rows(ROOT / 'state/ghost/ghost_mark_observations_raw.csv')[base:] if r['run_id'] == rid))
+PY
+}
+attempt=1
+while :; do
+  : >"$RUN_OUTPUT"
+  printf '%s' "$PROMPT" | timeout "${CLAUDE_TIMEOUT:-15m}" "$CLAUDE_BIN" \
+    --print \
+    --model "$CLAUDE_MODEL" \
+    --permission-mode default \
+    --allowedTools "$GHOST_MARK_ALLOWED_TOOLS" \
+    --settings '{"enabledPlugins":{"claude-mem@thedotmack":false}}' \
+    >"$RUN_OUTPUT" 2>>"$ERR_FILE"
+  CLAUDE_EC=${PIPESTATUS[1]}
+  cat "$RUN_OUTPUT" >>"$LOG_FILE"
+  N_OBS="$(count_run_observations 2>>"$ERR_FILE")"
+  if [ -z "$N_OBS" ]; then
+    echo "[$RUN_TS] observation count failed; not retrying" >>"$ERR_FILE"
+    break
+  fi
+  if [ "$CLAUDE_EC" -ne 0 ] || [ "$N_OPEN" -eq 0 ] || [ "$N_OBS" -gt 0 ] || [ "$attempt" -ge "$MARK_MAX_ATTEMPTS" ]; then
+    break
+  fi
+  if [ "${FORCE_RUN:-false}" != "true" ] && [ "$((10#$(TZ='America/New_York' date +%H%M)))" -ge 1550 ]; then
+    echo "[$RUN_TS] mark attempt $attempt logged 0 observations but NY time >= 15:50; not retrying" >>"$ERR_FILE"
+    break
+  fi
+  echo "[$RUN_TS] mark attempt $attempt logged 0 observations (connector likely still pending); retrying in 20s" >>"$ERR_FILE"
+  attempt=$((attempt + 1))
+  sleep 20
+done
 set -e
 trap on_err ERR
-cat "$RUN_OUTPUT" >>"$LOG_FILE"
 if [ "$CLAUDE_EC" -ne 0 ]; then
   echo "[$RUN_TS] FAILURE: claude_ec=$CLAUDE_EC" >>"$ERR_FILE"
   false
 fi
 
 # Success requires actual observations for every candidate, not only model text.
-"$ARIA_HOME/scripts/backtest/.venv/bin/python3" - "$OPEN_POSITIONS_FILE" "$RUN_OUTPUT" "$RAW_BASELINE" "$RUN_ID" <<'PY'
+"$ARIA_HOME/scripts/backtest/.venv/bin/python3" - "$OPEN_POSITIONS_FILE" "$RUN_OUTPUT" "$RAW_BASELINE" "$RUN_ID" <<'PY' 2>>"$ERR_FILE"
 import json, re, sys
 from collections import Counter
 from pathlib import Path
@@ -209,6 +253,12 @@ counts = Counter(row['outcome'] for row in terminal.values())
 lines = Path(sys.argv[2]).read_text().strip().splitlines()
 summary = re.fullmatch(r'PROCESSED: (\d+) MARKED: (\d+) EXITED: (\d+)', lines[-1] if lines else '')
 assert summary and tuple(map(int, summary.groups())) == (len(terminal), counts['marked'], counts['exited']), 'Missing or incorrect summary'
+# A run in which every mark was rejected (or any rejection was systemic, e.g. outside market hours) is a
+# FAILED run, not a "Done" run (2026-09-18: 10/10 outside-hours rejections still wrote the Done line).
+from scripts.ghost.ghost_reconcile import systemic_failure
+failed, message = systemic_failure(list(terminal.values()), 'mark')
+if failed:
+    raise SystemExit(f'SYSTEMIC FAILURE: {message}')
 PY
 
 notify "ARIA Ghost System (Marks) complete" "$TODAY"

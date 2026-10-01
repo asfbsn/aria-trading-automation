@@ -55,6 +55,8 @@ ERR_FILE="$LOG_DIR/${TODAY}_daily-scan-ghost-stderr.log"
 on_err() {
   local ec=$?
   trap - ERR
+  local why
+  why="$(tail -n 8 "$ERR_FILE" 2>/dev/null | tr '\r' '\n' | awk '!/%/ && NF' | tail -n 3 | tr '\n' '|' | head -c 300)"
   # Close out both files so a failure is legible from disk alone, not only
   # via notify/Telegram (2026-09-24 incident: a timeout-killed fetch_iv_live
   # left $ERR_FILE ending mid-retry with no closing line and no $LOG_FILE at
@@ -66,7 +68,7 @@ on_err() {
       "$TODAY" "$RUN_TS" "$ec" "$ERR_FILE" >"$LOG_FILE"
   fi
   notify "ARIA Ghost System FAILED" "exit $ec — see $ERR_FILE"
-  send_telegram "ARIA Ghost System FAILED — ${TODAY}. See $ERR_FILE." || true
+  send_telegram "ARIA Ghost System FAILED — ${TODAY} (exit $ec). Last log lines: ${why:-none}. See $ERR_FILE." || true
   exit "$ec"
 }
 trap on_err ERR
@@ -194,7 +196,7 @@ if [ "$CLAUDE_EC" -ne 0 ]; then
   false
 fi
 # Success requires actual observations for every candidate, not only model text.
-python3 - "$PRESCREEN_FILE" "$RUN_OUTPUT" "$RAW_BASELINE" <<'PY'
+python3 - "$PRESCREEN_FILE" "$RUN_OUTPUT" "$RAW_BASELINE" <<'PY' 2>>"$ERR_FILE"
 import json, re, sys
 from collections import Counter
 from pathlib import Path
@@ -226,6 +228,13 @@ counts = Counter(row['outcome'] for row in terminal.values())
 lines = Path(sys.argv[2]).read_text().strip().splitlines()
 summary = re.fullmatch(r'PROCESSED: (\d+) ACCEPTED: (\d+) REJECTED: (\d+)', lines[-1] if lines else '')
 assert summary and tuple(map(int, summary.groups())) == (len(terminal), counts['accepted'], counts['rejected']), 'Missing or incorrect summary'
+# Systemic quote rejections (outside market hours, frozen/delayed data, bad timestamps) mean the run could not
+# observe anything real: fail it instead of writing a "Done" line. Ordinary per-candidate rejections
+# (resolution_not_exact, leg bids, skew) are normal outcomes and never fail a run here.
+from scripts.ghost.ghost_reconcile import systemic_failure
+failed, message = systemic_failure(list(terminal.values()), 'entry')
+if failed:
+    raise SystemExit(f'SYSTEMIC FAILURE: {message}')
 PY
 
 # Distinct post-scan step. Exclusive creation preserves an existing dated copy.

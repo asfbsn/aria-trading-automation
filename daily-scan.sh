@@ -424,7 +424,53 @@ if [ "$SCAN_OK" = "true" ]; then
   exit 0
 else
   notify "ARIA scan FAILED" "incomplete — see log"
-  REASON="$(sed -n '3,6p' "$LOG_FILE" | head -c 800)"
+  # Reason = the guard's own diagnostics (which check failed + which finalists went unverified), not
+  # the report headline (the old sed '3,6p' printed lines 3-6 of the report, hiding the real cause).
+  REASON="$(python3 - "$LOG_FILE" "${PRESCREEN_FILE:-}" "$FULL_SCAN_MODE" "${CLAUDE_EC:-?}" \
+      "${SIGNALS_COMPLETED:-}" "${SIGNALS_FAILED:-}" "${SHORTLIST_COUNT:-}" \
+      "${FINALISTS_VERIFIED:-}" "${EXPECTED_FINALISTS:-}" \
+      "${CONSTITUENTS_MATCH:-}" "${FINALISTS_MATCH:-}" <<'PY' 2>>"$ERR_FILE"
+import json, re, sys
+log_path, pre_path, full, ec, sc, sf, n_short, fv, ef, cm, fm = sys.argv[1:12]
+parts = []
+if ec != "0":
+    parts.append(f"claude_ec={ec}" + (" (CLAUDE_TIMEOUT hit)" if ec == "124" else ""))
+try:
+    log = open(log_path, encoding="utf-8", errors="replace").read()
+except OSError:
+    log = ""
+def marker(name):
+    m = re.search(rf"^{name}:(.*)$", log, re.M)
+    return None if not m else sorted(s.strip() for s in m.group(1).split(",") if s.strip())
+cons, fins = marker("SCREENER_CONSTITUENTS"), marker("FINALISTS_VERIFIED_TICKERS")
+if cons is None: parts.append("no SCREENER_CONSTITUENTS marker")
+if sf == "": parts.append("no SIGNALS_FAILED marker")
+elif sf != "0": parts.append(f"SIGNALS_FAILED={sf}")
+if sc and n_short and sc != n_short: parts.append(f"SIGNALS_COMPLETED={sc}/{n_short}")
+if fv == "": parts.append("no FINALISTS_VERIFIED marker")
+elif ef and fv != ef: parts.append(f"FINALISTS_VERIFIED={fv}/{ef}")
+if full == "true" and pre_path:
+    try:
+        d = json.load(open(pre_path))
+        shortlist = sorted(d["shortlist"])
+        expected = sorted([t for t, v in d["per_ticker"].items() if v.get("entry_confirmed")]
+                          + [f["ticker"] for f in d["failures"]])
+        if cons is not None and cm == "no":
+            miss = sorted(set(shortlist) - set(cons)); extra = sorted(set(cons) - set(shortlist))
+            parts.append("constituents mismatch" + (f" missing={','.join(miss)}" if miss else "")
+                         + (f" extra={','.join(extra)}" if extra else ""))
+        if fins is None:
+            parts.append("no FINALISTS_VERIFIED_TICKERS marker; expected=" + ",".join(expected))
+        elif fm == "no":
+            miss = sorted(set(expected) - set(fins)); extra = sorted(set(fins) - set(expected))
+            parts.append("unverified finalists=" + (",".join(miss) or "none")
+                         + (f" unexpected={','.join(extra)}" if extra else ""))
+    except Exception as e:
+        parts.append(f"prescreen unreadable ({type(e).__name__})")
+print("; ".join(parts) if parts else "gate failed with no marker delta -- see attached log")
+PY
+)"
+  REASON="${REASON:-unknown (reason builder failed)}"; REASON="${REASON:0:400}"
   send_telegram "🔴 ARIA scan FAILED / incomplete — ${TODAY}. Reason: ${REASON:-unknown}. Full log attached." "$LOG_FILE"
   echo "[$RUN_TS] FAILURE: claude_ec=${CLAUDE_EC:-?}, marker=$(grep -c '^SCREENER_CONSTITUENTS:' "$LOG_FILE" 2>/dev/null || echo 0), constituents_match=${CONSTITUENTS_MATCH:-?}, signals_completed=${SIGNALS_COMPLETED:-?}, signals_failed=${SIGNALS_FAILED:-?}, shortlist_count=${SHORTLIST_COUNT:-?}, finalists_verified=${FINALISTS_VERIFIED:-?}, expected_finalists=${EXPECTED_FINALISTS:-?}, finalists_match=${FINALISTS_MATCH:-?}" >>"$ERR_FILE"
   exit 1
