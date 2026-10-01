@@ -101,12 +101,13 @@ if [ "${FORCE_RUN:-false}" != "true" ]; then
     exit 0
   fi
   # 10#$(...) forces base-10 parsing — "0900" as a bare int is invalid octal.
-  # Target ET window: 15:30-15:59 America/New_York (end-of-day pricing within RTH; widened from 15:45
-  # because ~27 positions x 2 legs takes ~9 minutes of quote capture and must finish before the 16:00 close).
+  # A run may START between 14:45 and 15:35 America/New_York. Marks are captured one position at a time (~1 minute
+  # each, 27+ positions and growing), so the session needs a long runway BEFORE the 16:00 close: every quote taken
+  # after the close is rejected as quote_outside_regular_hours. The session itself is capped at 15:55 ET below.
   # Matches the gtc-guard.sh/exit-guard.sh pattern to handle box cron CRON_TZ bug.
   NY_HHMM=$((10#$(TZ='America/New_York' date +%H%M)))
-  if [ "$NY_HHMM" -lt 1530 ] || [ "$NY_HHMM" -ge 1600 ]; then
-    echo "[$RUN_TS] Outside 15:30-15:59 America/New_York (NY time now: $NY_HHMM) — skip." >>"$ERR_FILE"
+  if [ "$NY_HHMM" -lt 1445 ] || [ "$NY_HHMM" -ge 1535 ]; then
+    echo "[$RUN_TS] Outside the 14:45-15:35 America/New_York start window (NY time now: $NY_HHMM) — skip." >>"$ERR_FILE"
     exit 0
   fi
 fi
@@ -193,9 +194,20 @@ print(sum(1 for r in rows(ROOT / 'state/ghost/ghost_mark_observations_raw.csv')[
 PY
 }
 attempt=1
+CLAUDE_EC=1   # stays 1 (=> loud failure) if the loop never starts a session
 while :; do
+  ATTEMPT_TIMEOUT="${MARK_SESSION_MAX_SECS:-2700}"
+  if [ "${FORCE_RUN:-false}" != "true" ]; then
+    # Never let a session run past 15:55 ET: quotes after the 16:00 close are rejected as outside regular hours.
+    REMAIN="$(( $(TZ=America/New_York date -d '15:55' +%s) - $(date +%s) ))"
+    if [ "$REMAIN" -lt 90 ]; then
+      echo "[$RUN_TS] less than 90 s left before 15:55 ET; not starting a session" >>"$ERR_FILE"
+      break
+    fi
+    [ "$REMAIN" -lt "$ATTEMPT_TIMEOUT" ] && ATTEMPT_TIMEOUT="$REMAIN"
+  fi
   : >"$RUN_OUTPUT"
-  printf '%s' "$PROMPT" | timeout "${CLAUDE_TIMEOUT:-15m}" "$CLAUDE_BIN" \
+  printf '%s' "$PROMPT" | timeout "${ATTEMPT_TIMEOUT}s" "$CLAUDE_BIN" \
     --print \
     --model "$CLAUDE_MODEL" \
     --permission-mode default \
