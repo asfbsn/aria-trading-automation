@@ -135,6 +135,7 @@ PRESCREEN_FILE="$STATE_DIR/scratch/ghost_prescreen_${TODAY}.json"
 # guard against a hung yfinance pull.
 timeout 10m "$ARIA_HOME/scripts/backtest/.venv/bin/python3" \
   "$ARIA_HOME/scripts/ghost/ghost_prescreen_v2.py" $MODE_FLAG --output "$PRESCREEN_FILE" \
+  --ivpool-output "$STATE_DIR/scratch/ghost_ivpool_${TODAY}.json" \
   >>"$ERR_FILE" 2>&1
 echo "[$RUN_TS] Prescreen generated -> $PRESCREEN_FILE" >>"$ERR_FILE"
 # Validate local metadata and capture the raw-row baseline before the scan.
@@ -269,3 +270,16 @@ if [ -n "$ACCEPTED_TICKERS" ]; then
 fi
 send_telegram "$TELEGRAM_MSG" "$LOG_FILE"
 echo "[$RUN_TS] Done → $LOG_FILE" >>"$ERR_FILE"
+
+# Post-Done best-effort calibration capture: cannot affect scan exit or 19:50 watchdog check.
+# Pre-existing total budget already exceeds 30m watchdog window; capture runs safely after Done.
+if [ "${GHOST_IV_CAPTURE:-true}" = "true" ]; then
+( trap - ERR; set +e
+  out="$("$ARIA_HOME/scripts/ghost/run_iv_capture.sh" "$TODAY" 2>&1)"
+  ec=$?
+  printf '%s\n' "$out" >>"$ERR_FILE"
+  echo "[$RUN_TS] iv_capture exit=$ec $(printf '%s' "$out" | tail -n 1)" >>"$ERR_FILE"
+  exit 0
+) || true
+fi
+

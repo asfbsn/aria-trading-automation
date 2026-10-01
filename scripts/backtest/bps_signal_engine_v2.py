@@ -50,16 +50,20 @@ class BullPutSpreadSignalEngine:
         vrp_threshold: float = 1.1,
         iv_hv_cache_path: Path | None = None,
         suppress_reentry: bool = True,
+        gate_on_vrp: bool = True,
     ):
         if mode not in ("baseline", "vrp_only", "vrp_plus_baseline"):
             raise ValueError(f"Unknown entry mode: {mode!r}")
         if not math.isfinite(vrp_threshold) or vrp_threshold <= 0:
             raise ValueError("vrp_threshold must be finite and positive")
+        if not gate_on_vrp and mode != "vrp_only":
+            raise ValueError(f"gate_on_vrp=False is only valid for mode='vrp_only', got mode={mode!r}")
         self.width = width
         self.target_dte = target_dte
         self.mode = mode
         self.vrp_threshold = vrp_threshold
         self.suppress_reentry = suppress_reentry
+        self.gate_on_vrp = gate_on_vrp
         self.iv_hv_cache_path = (
             DEFAULT_IV_HV_CACHE_PATH if iv_hv_cache_path is None else Path(iv_hv_cache_path)
         )
@@ -176,7 +180,7 @@ class BullPutSpreadSignalEngine:
                 # Use bar t's volatility, never the fill bar t+1. Baseline
                 # records available VRP for reporting but is never gated on it.
                 vrp_ratio = self._vrp_ratio(vol_by_date.get(pd.Timestamp(dates[i]).date()))
-                if self.mode != "baseline":
+                if self.mode != "baseline" and self.gate_on_vrp:
                     if vrp_ratio is None:
                         self.skipped_missing_iv += 1
                         continue
@@ -239,6 +243,7 @@ def _self_test() -> None:
         with ohlcv_path.open("rb") as handle:
             prices = pickle.load(handle)
         code = next(code for code in cache if code in prices and len(prices[code]) > MIN_BARS + 1)
+        real_code = code
         data_map = {code: prices[code]}
         print(f"Real OHLCV smoke test: {code}")
         outputs = {mode: engine.generate(data_map) for mode, engine in engines.items()}
@@ -367,6 +372,61 @@ def _self_test() -> None:
             for e in engine_baseline_synth.entries
         ), "Baseline synthetic entry must have z_ma150 and ema150 as None"
     print("PASS: z_ma150 calculation parity and baseline None-entry verification")
+
+    # Verification of gate_on_vrp:
+    for bad_mode in ("baseline", "vrp_plus_baseline"):
+        try:
+            BullPutSpreadSignalEngine(mode=bad_mode, gate_on_vrp=False)
+            raise AssertionError(f"Expected ValueError for gate_on_vrp=False with mode={bad_mode}")
+        except ValueError:
+            pass
+
+    engine_gated = BullPutSpreadSignalEngine(mode="vrp_only", gate_on_vrp=True, suppress_reentry=False)
+    engine_ungated = BullPutSpreadSignalEngine(mode="vrp_only", gate_on_vrp=False, suppress_reentry=False)
+    if ohlcv_path.exists():
+        real_data_map = {real_code: prices[real_code]}
+        engine_gated._iv_hv_cache = cache
+        engine_ungated._iv_hv_cache = cache
+        engine_gated.generate(real_data_map)
+        engine_ungated.generate(real_data_map)
+        gated_keys = {(e["code"], e["date"]): e for e in engine_gated.entries}
+        ungated_keys = {(e["code"], e["date"]): e for e in engine_ungated.entries}
+        assert set(gated_keys.keys()).issubset(set(ungated_keys.keys())), (
+            "gate_on_vrp=False vrp_only entries must be a superset of gate_on_vrp=True"
+        )
+        assert len(ungated_keys) > len(gated_keys)
+        for k, g_entry in gated_keys.items():
+            u_entry = ungated_keys[k]
+            assert (
+                g_entry["z_ma150"] == u_entry["z_ma150"]
+                or (g_entry["z_ma150"] is not None and u_entry["z_ma150"] is not None and math.isclose(g_entry["z_ma150"], u_entry["z_ma150"], rel_tol=1e-9))
+            ), f"z_ma150 mismatch on shared entry {k}"
+        print(f"PASS: gate_on_vrp superset verification on real data (gated={len(gated_keys)}, ungated={len(ungated_keys)})")
+
+    synth_vrp_history = pd.DataFrame(
+        {"iv_current": [0.30, 0.15], "hv_current": [0.20, 0.20]},
+        index=[bar_a_date, bar_b_date],
+    )
+    synth_vrp_cache = {test_code: synth_vrp_history}
+    synth_gated = BullPutSpreadSignalEngine(mode="vrp_only", gate_on_vrp=True, suppress_reentry=False)
+    synth_gated._iv_hv_cache = synth_vrp_cache
+    synth_gated.generate(reentry_map)
+    synth_ungated = BullPutSpreadSignalEngine(mode="vrp_only", gate_on_vrp=False, suppress_reentry=False)
+    synth_ungated._iv_hv_cache = synth_vrp_cache
+    synth_ungated.generate(reentry_map)
+
+    s_gated_keys = {(e["code"], e["date"]): e for e in synth_gated.entries}
+    s_ungated_keys = {(e["code"], e["date"]): e for e in synth_ungated.entries}
+    assert set(s_gated_keys.keys()).issubset(set(s_ungated_keys.keys())), (
+        "gate_on_vrp=False must be superset of gate_on_vrp=True on synthetic series"
+    )
+    assert len(s_gated_keys) < len(s_ungated_keys)
+    for k, g_entry in s_gated_keys.items():
+        u_entry = s_ungated_keys[k]
+        assert math.isclose(g_entry["z_ma150"], u_entry["z_ma150"], rel_tol=1e-9)
+    b_entry = s_ungated_keys[(test_code, str(reentry_dates[MIN_BARS + 3].date()))]
+    assert b_entry["vrp_ratio"] is not None and math.isclose(b_entry["vrp_ratio"], 0.75)
+    print("PASS: gate_on_vrp synthetic superset and VRP recording verification")
 
 
 if __name__ == "__main__":
