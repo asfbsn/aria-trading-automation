@@ -41,6 +41,10 @@ import pandas as pd
 import yfinance as yf
 from curl_cffi import requests
 
+# Tickers the IBKR connector cannot price (no US listing or options section), so the live scan
+# hard-fails its completeness guard on them every day. APGE: VALUE-exchange listing only (2026-10-01).
+EXCLUDED_TICKERS = {"APGE"}
+
 SOURCES = [
     ("IVV", "https://www.ishares.com/us/products/239726/ishares-core-s-p-500-etf/latest-holdings.csv"),
     ("IJH", "https://www.ishares.com/us/products/239763/ishares-core-s-p-mid-cap-etf/latest-holdings.csv"),
@@ -273,6 +277,8 @@ def main():
             file=sys.stderr,
         )
         sys.exit(1)
+
+    rows = [r for r in rows if r["ticker"] not in EXCLUDED_TICKERS]
 
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(OUTPUT_PATH, "w", newline="", encoding="utf-8") as f:
