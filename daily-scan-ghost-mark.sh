@@ -131,7 +131,12 @@ timeout 5m "$ARIA_HOME/scripts/backtest/.venv/bin/python3" \
     echo "[$RUN_TS] WARNING: fetch_settled_closes.py failed (exit $?); continuing with unmeasured structural check" >>"$ERR_FILE"
 }
 
-OPEN_POSITIONS_FILE="$STATE_DIR/scratch/ghost_open_positions_${TODAY}.json"
+# Wrapper-only FULL list (large: ~1.8K chars per position). The Claude session must NOT read it: the Read tool
+# truncates a single long line at ~42K chars, which aborted the 2026-10-05 and 2026-10-06 runs (33/37 positions).
+OPEN_POSITIONS_FILE="$STATE_DIR/scratch/ghost_open_full_${TODAY}.json"
+# Compact worklist the session reads (name matches the Read grant and the prompt): ONE position per line, only
+# the fields needed to quote a position.
+SESSION_POSITIONS_FILE="$STATE_DIR/scratch/ghost_open_positions_${TODAY}.json"
 # Generate today's open positions ourselves. ghost_exit_logger.py needs pandas/
 # signal_core/dix_fetcher_v2 (the backtest venv). 10m timeout matches
 # daily-scan-ghost.sh guard.
@@ -139,6 +144,22 @@ timeout 10m "$ARIA_HOME/scripts/backtest/.venv/bin/python3" \
   "$ARIA_HOME/scripts/ghost/ghost_exit_logger.py" --list-open \
   >"$OPEN_POSITIONS_FILE" 2>>"$ERR_FILE"
 echo "[$RUN_TS] Open positions listed -> $OPEN_POSITIONS_FILE" >>"$ERR_FILE"
+python3 - "$OPEN_POSITIONS_FILE" "$SESSION_POSITIONS_FILE" <<'PY' 2>>"$ERR_FILE"
+import json, os, sys
+KEEP = ('ticker', 'candidate_id', 'resolution_status', 'underlying_contract_id', 'short_contract_id',
+        'long_contract_id', 'resolved_short_strike', 'resolved_long_strike', 'resolved_expiry')
+with open(sys.argv[1]) as handle:
+    data = json.load(handle)
+assert isinstance(data, list), 'Open positions must be a JSON array'
+lines = [json.dumps({key: row.get(key) for key in KEEP}, separators=(',', ':')) for row in data]
+body = '[\n' + ',\n'.join(lines) + '\n]\n' if lines else '[]\n'
+tmp = sys.argv[2] + '.tmp'
+with open(tmp, 'w') as handle:
+    handle.write(body)
+os.replace(tmp, sys.argv[2])
+assert json.load(open(sys.argv[2])) == [{key: row.get(key) for key in KEEP} for row in data]
+PY
+echo "[$RUN_TS] Session worklist written -> $SESSION_POSITIONS_FILE" >>"$ERR_FILE"
 
 # Validate local metadata and capture the raw-row baseline before the scan.
 RUN_ID="$(python3 - "$OPEN_POSITIONS_FILE" <<'PY'
