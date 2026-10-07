@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # ARIA Ghost System — daily open position marking and exit runner.
 # Runs on a separate, later cron time than daily-scan-ghost.sh (end-of-day pricing).
-# Placeholder cron: 19:30 IDT.
+# Cron fires several times across the Israel-local range ~20:45-22:30 IDT (DST offsets differ from the US). The
+# NY_HHMM gate below is what controls execution: a run may START only between 14:45 and 15:35 America/New_York
+# (about 21:45-22:35 IDT), so extra fires outside it exit 0, and fires after a completed run hit the Done guard.
 set -Eeuo pipefail
 export PATH="$HOME/.local/bin:$HOME/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 export ARIA_HOME="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"

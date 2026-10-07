@@ -32,7 +32,9 @@ Otherwise, process EVERY item in the array, in its existing order. No strike red
 1. Verify the position carries valid positive integer contract IDs (`underlying_contract_id`,
    `short_contract_id`, `long_contract_id`) and `resolution_status == "exact"`.
    Positions missing contract IDs or marked unresolved/blocked cannot be quoted via
-   `get_price_snapshot` — skip quoting them.
+   `get_price_snapshot` — for them skip steps 2–3 (make no IBKR calls) but STILL complete
+   steps 4–5 with every quote field null, so the logger records the observation. Never
+   omit a position: the wrapper reconciles every open position against a logged outcome.
 2. Call `get_price_snapshot` on the underlying contract using the position's OWN
    integer `underlying_contract_id` from the open-positions entry. Record `underlying_spot`
    from its response. If unavailable, use null.
