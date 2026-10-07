@@ -835,7 +835,13 @@ def run(
         return
 
     for threshold in ALL_THRESHOLDS:
-        gate_cis = bootstrap_all_gates(oos_scored, threshold)
+        arm_ns = [arm["n"] for arm in oos_stats[threshold].values() if isinstance(arm, dict) and "n" in arm]
+        if oos_stats[threshold]["combined"]["n"] < 30 or any(n == 0 for n in arm_ns):
+            # bootstrap_iteration cannot resample an empty arm; compute_verdict short-circuits to INCONCLUSIVE
+            # on combined n < 30 and the NaN CIs keep every other gate non-passing.
+            gate_cis = {gate: (math.nan, math.nan) for gate in ("gate_a", "gate_b", "gate_c", "gate_d", "gate_e")}
+        else:
+            gate_cis = bootstrap_all_gates(oos_scored, threshold)
         verdict_res = compute_verdict(
             oos_stats[threshold],
             gate_cis,

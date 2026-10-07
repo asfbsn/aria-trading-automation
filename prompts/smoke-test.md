@@ -1,16 +1,16 @@
 You are validating the ARIA daily-scan automation PLUMBING (smoke test — NOT the full scan).
 
-Do this briefly, in order:
-1. Call tv_health_check. ONLY if not connected, call tv_launch (kill_existing=true) and
-   re-check. Do NOT relaunch if it is already connected.
-2. Open the screener: ui_click by data-name "screener-dialog-button". Confirm the active
-   preset is "Adi option swing 2.0" (ui_evaluate) and count its constituents.
-3. Set the chart to AAPL on Daily (1D); read the "Premium Trading Dashboard" entry row
-   (data_get_pine_tables) and report that row's text.
-4. Print a 4-line OK summary: auth ok? bridge connected? screener constituent count?
-   dashboard row readable?
+Do this briefly, in order. Use only the read-only IBKR tools and the local signal script.
+1. Call `search_contracts` for AAPL (security_type STK) and note the US primary-listing `contract_id`.
+   If the call fails or the IBKR tools are unavailable, say so and stop.
+2. Call `get_price_snapshot` on that contract_id and report the last price.
+3. Call `get_price_history` on that contract_id for at least 155 daily bars, pipe the bars through
+   `python3 scripts/compute_signal.py` as the scan prompt describes, and report the returned close and
+   `above_ma150` value.
+4. Print a 4-line OK summary: auth ok? IBKR connector attached? price snapshot readable? signal script ran?
 
-Then, on its own final line, emit exactly (real tickers if you read them):
-SCREENER_CONSTITUENTS: SYM1,SYM2,...
+Then, on its own final line, emit exactly the following ONLY if every check above succeeded
+(otherwise omit it so the watchdog sees an incomplete run):
+SCREENER_CONSTITUENTS: AAPL
 
 Keep under ~180 words. Do NOT run the full per-ticker scan.

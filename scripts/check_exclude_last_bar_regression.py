@@ -93,10 +93,22 @@ def test_compute_signal():
     )
     print("PASS: compute_signal Case A (pre-market call keeps last bar: close=95.0)")
 
-    # Case B: regular-hours call, last bar dated today_ny_str == today_ny_str
-    bars_b = build_synthetic_bars(MIN_BARS + 5, end_date_str=today_ny_str)
+    # Case B: regular-hours call, last bar dated the same NY day. Mocked clock + direct main() call so the
+    # result does not depend on the wall-clock time the test is run at.
+    class MockDtRegularHours(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.datetime(2026, 6, 15, 14, 0, 0, tzinfo=tz)
+
+    bars_b = build_synthetic_bars(MIN_BARS + 5, end_date_str="2026-06-15")
     payload_b = {"ticker": "TEST", "bars": bars_b}
-    out_b = run_cli_script("compute_signal.py", payload_b, ["--exclude-last-bar"])
+    buf_b = io.StringIO()
+    with patch("compute_signal.datetime", MockDtRegularHours), \
+         patch("sys.argv", ["compute_signal.py", "--exclude-last-bar"]), \
+         patch("sys.stdin", io.StringIO(json.dumps(payload_b))), \
+         redirect_stdout(buf_b):
+        compute_signal.main()
+    out_b = json.loads(buf_b.getvalue())
     assert out_b["close"] == 100.0, (
         f"[FAIL] compute_signal Case B: expected 100.0 (in-progress bar dropped), got {out_b['close']}"
     )
@@ -140,10 +152,22 @@ def test_compute_exit_signal():
     )
     print("PASS: compute_exit_signal Case A (pre-market call keeps last bar: close=95.0)")
 
-    # Case B: regular-hours call, last bar dated today_ny_str == today_ny_str
-    bars_b = build_synthetic_bars(MIN_BARS + 5, end_date_str=today_ny_str)
+    # Case B: regular-hours call, last bar dated the same NY day. Mocked clock + direct main() call so the
+    # result does not depend on the wall-clock time the test is run at.
+    class MockDtRegularHours(datetime.datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.datetime(2026, 6, 15, 14, 0, 0, tzinfo=tz)
+
+    bars_b = build_synthetic_bars(MIN_BARS + 5, end_date_str="2026-06-15")
     payload_b = {"ticker": "TEST", "short_strike": 98.0, "bars": bars_b}
-    out_b = run_cli_script("compute_exit_signal.py", payload_b, ["--exclude-last-bar"])
+    buf_b = io.StringIO()
+    with patch("compute_exit_signal.datetime", MockDtRegularHours), \
+         patch("sys.argv", ["compute_exit_signal.py", "--exclude-last-bar"]), \
+         patch("sys.stdin", io.StringIO(json.dumps(payload_b))), \
+         redirect_stdout(buf_b):
+        compute_exit_signal.main()
+    out_b = json.loads(buf_b.getvalue())
     assert out_b["close"] == 100.0, (
         f"[FAIL] compute_exit_signal Case B: expected 100.0 (in-progress bar dropped), got {out_b['close']}"
     )
@@ -172,9 +196,16 @@ def test_compute_exit_signal():
 
     # Empirical check: real KLAC input from 2026-09-21 morning
     klac_path = REPO_ROOT / "state" / "scratch" / "signal_input_KLAC_exit.json"
+    klac_payload = None
     if klac_path.exists():
         with open(klac_path, "r", encoding="utf-8") as f:
             klac_payload = json.load(f)
+    # state/scratch is gitignored and live runs overwrite this file (it was replaced by a raw price-history
+    # response on 2026-09-29), so only run the check while it still holds the original signal-input payload.
+    if not (isinstance(klac_payload, dict) and isinstance(klac_payload.get("bars"), list)
+            and "short_strike" in klac_payload):
+        print("SKIP: compute_exit_signal empirical KLAC payload (scratch file no longer the 2026-09-21 input)")
+    else:
         out_klac = run_cli_script("compute_exit_signal.py", klac_payload, ["--exclude-last-bar"])
         assert out_klac["close"] == 176.99, (
             f"[FAIL] KLAC empirical reproduction: expected 176.99 (Friday close kept), got {out_klac['close']}"

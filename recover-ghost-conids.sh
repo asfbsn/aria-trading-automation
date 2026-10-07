@@ -16,8 +16,8 @@ CLAUDE_MODEL="${CLAUDE_MODEL:-claude-opus-4-8}"
 # Narrowly scoped tool grants: read-only contract resolution + scoped scratch I/O ONLY.
 # Deliberately excludes get_price_snapshot and routine mark/fill tools.
 readonly GHOST_RECOVER_ALLOWED_TOOLS="\
-Read(${ARIA_HOME}/state/ghost/ghost_entries.csv),\
-Edit(${ARIA_HOME}/state/scratch/ghost_recovery_*.json),\
+Read(/${ARIA_HOME}/state/ghost/ghost_entries.csv),\
+Edit(/${ARIA_HOME}/state/scratch/ghost_recovery_*.json),\
 mcp__claude_ai_Interactive_Brokers_IBKR__search_contracts,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_option_parameters,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_option_data"

@@ -80,8 +80,6 @@ connected."
    of unpaired/ambiguous option legs, always emitted — 0 when there are none —
    so the wrapper can detect the marker's absence as a report-parsing gap
    rather than silently reading "no unpaired legs."
-   if it affects pairing. If no `EARLY_ASSIGNMENT_DETECTED:` line appears,
-   proceed normally with no addition to the report.
 
 2. **Compute technical exit signal:** For each open position pair:
    - `search_contracts` (security_type STK) on the underlying symbol → resolve
@@ -202,7 +200,7 @@ connected."
 
 ## Output
 Keep it short and scannable — this goes straight to Telegram, not a report file.
-If step 1.5 produced any `EARLY_ASSIGNMENT_DETECTED:` line(s), they come
+If step 1's early-assignment check produced any `EARLY_ASSIGNMENT_DETECTED:` line(s), they come
 FIRST, each on its own line, before everything below — the wrapper scans for
 this marker to trigger a separate, immediate high-priority alert.
 Format:

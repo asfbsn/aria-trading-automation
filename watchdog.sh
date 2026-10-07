@@ -19,9 +19,14 @@ DOW="$(date +%u)"; [ "$DOW" -ge 6 ] && exit 0
 
 tg() {
   local tok="${TELEGRAM_BOT_TOKEN:-}" chat="${TELEGRAM_CHAT_ID:-}"
-  { [ -z "$tok" ] || [ -z "$chat" ]; } && return 0
-  curl -s -m 30 "https://api.telegram.org/bot${tok}/sendMessage" \
-    --data-urlencode "chat_id=${chat}" --data-urlencode "text=$1" >/dev/null 2>&1 || true
+  if [ -z "$tok" ] || [ -z "$chat" ]; then
+    echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] Telegram not configured -- watchdog cannot alert." >&2
+    return 1
+  fi
+  # Token via -K process substitution, not argv -- a literal "bot<TOKEN>/..." URL is visible to any other
+  # local user via ps/proc cmdline. --fail turns an HTTP error response into a nonzero curl exit.
+  curl -s -m 30 --fail -K <(printf 'url = "https://api.telegram.org/bot%s/sendMessage"\n' "$tok") \
+    --data-urlencode "chat_id=${chat}" --data-urlencode "text=$1" >/dev/null
 }
 
 # A complete report exists iff today's log has the completion marker.

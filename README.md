@@ -106,9 +106,9 @@ unnoticed.
 | `prompts/bull-put-spread.md` | The scan prompt (rules, two-table output, settled-vs-provisional) |
 | `prompts/bull-put-spread-ror50.md` | On-demand IBKR-only strike selector: user-given tickers, dynamic spread widths, ROR≥50% gate, lowest-strike-that-clears rule |
 | `prompts/verify-rr-gate.md` | Ad-hoc wiring check for the IBKR R/R gate (1:1.5–2.5 band) |
-| `prompts/smoke-test.md` | Lightweight plumbing/auth check (one ticker) |
+| `prompts/smoke-test.md` | Lightweight plumbing/auth check (IBKR connector + one ticker) |
 | `us-market-holidays.txt` | NYSE full-day closures to skip (update yearly) |
-| `.env.example` | Template for `.env` (GUI, Claude auth; Telegram vars not included — add manually, see notes) |
+| `.env.example` | Template for `.env` (GUI, Claude auth, Telegram bot token / chat id placeholders) |
 | `priority-today.md` | *(gitignored)* optional date-gated daily priority overlay |
 | `logs/`, `state/` | *(gitignored)* runtime output + hashes |
 
@@ -188,9 +188,10 @@ tickers to surface them at the top of that day's report. It auto-expires (date-g
   interactive session (`FORCE_RUN=true ./daily-scan.sh`). The auth note above fixed
   one cause (exported tokens); something in the cron environment still breaks
   connector attach.
-- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` are not in `.env`/`.env.example` — all
-  four scripts treat Telegram as optional and silently skip when unset. Set them
-  (in `.env` or the cron environment) or delivery is desktop-notify only.
+- `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` are placeholders in `.env.example` — copy
+  the template to `.env` and fill in real values (or set them in the cron
+  environment). The scan scripts treat Telegram as optional and skip when unset, so
+  delivery is desktop-notify only until you do.
 - Universe symbol hygiene: yfinance chokes on a few rows (`BRKB` needs `BRK-B`
   format; `XTSLA` is a cash fund; `HEIA`, `FDXF`, `HONA`, `SPCX`, `SUNB` also fail).
   Harmless — the prescreen passes them through to IBKR — but worth cleaning on the

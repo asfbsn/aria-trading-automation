@@ -24,7 +24,7 @@ STDERR_FILE="$OUT_DIR/harvest_stderr_${STAMP}.log"
 # trusted local script (scripts/harvest_extract_raw_responses.py), not by the
 # agent.
 readonly HARVEST_ALLOWED_TOOLS="\
-Read(${ARIA_HOME}/state/scratch/spike_capture_input.json),\
+Read(/${ARIA_HOME}/state/scratch/spike_capture_input.json),\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_price_history,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_option_parameters,\
 mcp__claude_ai_Interactive_Brokers_IBKR__get_option_data,\
