@@ -73,9 +73,17 @@ Copy mode and signal_bar_date from the prescreen envelope when absent on an item
    independent of each other: one leg can carry a genuine connector
    timestamp while the other falls back to capture time, and each flag must
    reflect only its own leg, never copied from or matched to the other leg's
-   value. Never reuse a timestamp across legs either way. Copy bid/ask sizes, not open interest,
-   into size fields. Missing sizes stay null. Preserve raw bid/ask numbers
-   even if crossed, zero, or negative.
+   value. Never reuse a timestamp across legs either way. Copy bid/ask sizes into the size
+   fields. Missing sizes stay null. Preserve raw bid/ask numbers even if crossed, zero, or
+   negative.
+   Open interest: each leg's response carries `option-open-interest: {callInterest, putInterest}`.
+   Both legs are PUT contracts, so copy the `putInterest` number (ignore `callInterest`) into
+   `short_open_interest` / `long_open_interest` as a plain JSON number. If the field is absent
+   from that leg's response, leave it null; never estimate it, copy it from the other leg, or
+   substitute the size fields. The logger enforces the live liquidity gate (both legs'
+   bid-ask spread <= $0.30 AND put open interest >= 100) and rejects with a `live_gate_*`
+   reason otherwise: do NOT pre-filter, still write the file and call the logger so the
+   rejection is recorded.
    Set `market_data_type` from each leg's own `top_status` value (REALTIME,
    DELAYED, FROZEN, FROZEN_DELAYED, REJECT) — `market_data_type` may be
    `live` only if BOTH legs' `top_status` is explicitly REALTIME (matches
@@ -135,6 +143,8 @@ Copy mode and signal_bar_date from the prescreen envelope when absent on an item
   "long_ask": null,
   "long_bid_size": null,
   "long_ask_size": null,
+  "short_open_interest": null,
+  "long_open_interest": null,
   "long_quote_ts_utc": null,
   "short_quote_ts_is_estimated": false,
   "long_quote_ts_is_estimated": false,

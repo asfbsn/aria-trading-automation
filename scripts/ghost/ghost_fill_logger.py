@@ -49,13 +49,18 @@ ROOT = Path(__file__).resolve().parents[2]
 # decision that date; still bounds inter-leg staleness, just to a looser
 # number reflecting what capture-time timestamps can actually measure.
 QUOTE_SKEW_MAX_SECONDS = 15
+# LIVE liquidity gate (owner decision 2026-10-02, item 3a): the same two conditions the live scan enforces,
+# applied at Ghost ACCEPTANCE. Deliberately NOT the live R/R band -- Ghost must let the extended-VRP thesis play out.
+# Every rejected attempt is still preserved in ghost_observations_raw.csv (full input JSON) with its own reason.
+LIVE_MAX_LEG_SPREAD = 0.30      # dollars per share, BOTH legs (bid-ask)
+LIVE_MIN_OPEN_INTEREST = 100    # put open interest, BOTH legs
 INPUT_FIELDS = '''candidate_id run_id trade_date signal_bar_date mode ticker
 signal_close ma150 vrp_ratio iv_current hv_current iv_as_of_date gex_regime
 gex_percentile gex_data_available gex_as_of z_ma150 filter_tag derived_short_strike derived_long_strike
 derived_expiry resolved_short_strike resolved_long_strike resolved_expiry
 resolution_status underlying_contract_id short_contract_id long_contract_id
 underlying_spot short_bid short_ask short_bid_size short_ask_size
-short_quote_ts_utc long_bid long_ask long_bid_size long_ask_size long_quote_ts_utc
+short_quote_ts_utc long_bid long_ask long_bid_size long_ask_size short_open_interest long_open_interest long_quote_ts_utc
 short_quote_ts_is_estimated long_quote_ts_is_estimated market_data_type in_rth_claimed
 code_version_hash git_head git_dirty'''.split()
 ENTRY_FIELDS = '''run_id quote_ts_utc trade_date signal_bar_date mode ticker candidate_id
@@ -64,7 +69,7 @@ iv_as_of_date gex_regime gex_percentile gex_data_available gex_as_of z_ma150 fil
 resolved_short_strike resolved_long_strike resolved_expiry resolution_status
 underlying_contract_id short_contract_id long_contract_id
 underlying_spot short_bid short_ask short_mid short_bid_size short_ask_size long_bid
-long_ask long_mid long_bid_size long_ask_size short_quote_ts_utc long_quote_ts_utc
+long_ask long_mid long_bid_size long_ask_size short_open_interest long_open_interest short_quote_ts_utc long_quote_ts_utc
 short_quote_ts_is_estimated long_quote_ts_is_estimated quote_skew_seconds
 short_spread_abs long_spread_abs credit_mid
 credit_natural displayed_crossing_cost_per_leg spread_width_pct_of_credit
@@ -94,6 +99,10 @@ def quote_time(value):
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ValueError('timestamp requires timezone')
     return parsed.astimezone(timezone.utc)
+
+
+def is_real_number(value):
+    return (not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value))
 
 
 def validate(data):
@@ -150,14 +159,22 @@ def validate(data):
         values[f'{leg}_spread_abs'] = ask - bid
     if values['short_mid'] <= values['long_mid']:
         return values, 'nonpositive_mid_credit'
+    # Live liquidity gate. Precedence: open interest unusable -> spread too wide -> open interest too low.
+    for leg in ('short', 'long'):
+        if not is_real_number(data.get(f'{leg}_open_interest')) or data[f'{leg}_open_interest'] < 0:
+            return values, 'live_gate_open_interest_missing'
+    for leg in ('short', 'long'):
+        if values[f'{leg}_spread_abs'] > LIVE_MAX_LEG_SPREAD + 1e-9:
+            return values, 'live_gate_spread_exceeds_0.30'
+    for leg in ('short', 'long'):
+        if data[f'{leg}_open_interest'] < LIVE_MIN_OPEN_INTEREST:
+            return values, 'live_gate_open_interest_below_100'
     credit = values['short_mid'] - values['long_mid']
     natural = data['short_bid'] - data['long_ask']
     values.update(credit_mid=credit, credit_natural=natural,
                   displayed_crossing_cost_per_leg=(credit - natural) / 2,
                   spread_width_pct_of_credit=(values['short_spread_abs'] + values['long_spread_abs']) / credit,
-                  liquidity_gate_pass=bool(values['short_spread_abs'] <= 0.30 and
-                                           values['long_spread_abs'] <= 0.30 and
-                                           data.get('short_bid_size') and data.get('long_ask_size')),
+                  liquidity_gate_pass=True,  # every accepted row passed the live liquidity gate above
                   quote_ts_utc=max(short_ts, long_ts).isoformat())
     return values, ''
 
@@ -252,7 +269,8 @@ def self_test():
                 derived_expiry='2026-10-16', resolved_expiry='2026-10-16',
                 underlying_contract_id=123456, short_contract_id=234567, long_contract_id=345678,
                 short_bid=2.0, short_ask=2.2, long_bid=0.9, long_ask=1.1,
-                short_bid_size=3, long_bid_size=2, market_data_type='live',
+                short_bid_size=3, long_bid_size=2, short_open_interest=500, long_open_interest=500,
+                market_data_type='live',
                 short_quote_ts_utc='2026-09-15T14:00:00Z',
                 long_quote_ts_utc='2026-09-15T14:00:02+00:00',
                 short_quote_ts_is_estimated=False, long_quote_ts_is_estimated=False,
@@ -367,6 +385,50 @@ def self_test():
             assert int(row['underlying_contract_id']) == 987654321
             assert int(row['short_contract_id']) == 876543210
             assert int(row['long_contract_id']) == 765432109
+        def raw_reason(candidate_id):
+            return [r for r in rows(state / 'ghost_observations_raw.csv') if r['candidate_id'] == candidate_id][-1]['reason']
+        def no_entry(candidate_id):
+            return not [r for r in rows(state / 'ghost_entries.csv') if r['candidate_id'] == candidate_id]
+        def gate_persists_open_interest():
+            row = [r for r in rows(state / 'ghost_entries.csv') if r['candidate_id'] == 'valid'][0]
+            assert row['short_open_interest'] == '500' and row['long_open_interest'] == '500'
+            assert row['liquidity_gate_pass'] == 'True'
+        def gate_boundaries_accept():
+            # spread exactly $0.30 on the short leg (2.00/2.30) and open interest exactly 100 on both legs
+            res = record({**base, 'candidate_id': 'edge_ok', 'short_ask': 2.3,
+                          'short_open_interest': 100, 'long_open_interest': 100})
+            assert res['outcome'] == 'accepted', res
+            res = record({**base, 'candidate_id': 'edge_ok_long', 'long_ask': 1.2})   # long 0.9/1.2 = 0.30
+            assert res['outcome'] == 'accepted', res
+        def gate_spread_rejects():
+            for leg, field, value in (('short', 'short_ask', 2.31), ('long', 'long_ask', 1.21)):
+                cid = f'wide_{leg}'
+                res = record({**base, 'candidate_id': cid, field: value})
+                assert res['outcome'] == 'rejected' and res['reason'] == 'live_gate_spread_exceeds_0.30', res
+                assert no_entry(cid) and raw_reason(cid) == 'live_gate_spread_exceeds_0.30'
+        def gate_open_interest_rejects():
+            for leg in ('short', 'long'):
+                cid = f'lowoi_{leg}'
+                res = record({**base, 'candidate_id': cid, f'{leg}_open_interest': 99})
+                assert res['outcome'] == 'rejected' and res['reason'] == 'live_gate_open_interest_below_100', res
+                assert no_entry(cid) and raw_reason(cid) == 'live_gate_open_interest_below_100'
+        def gate_open_interest_missing_rejects():
+            cases = [('none_short', {'short_open_interest': None}), ('str_long', {'long_open_interest': '500'}),
+                     ('bool_long', {'long_open_interest': True}), ('nan_short', {'short_open_interest': float('nan')}),
+                     ('neg_long', {'long_open_interest': -1})]
+            for cid, patch_ in cases:
+                res = record({**base, 'candidate_id': cid, **patch_})
+                assert res['outcome'] == 'rejected' and res['reason'] == 'live_gate_open_interest_missing', (cid, res)
+                assert no_entry(cid)
+        def gate_precedence():
+            res = record({**base, 'candidate_id': 'prec1', 'short_ask': 2.5, 'long_open_interest': None})
+            assert res['reason'] == 'live_gate_open_interest_missing', res
+            res = record({**base, 'candidate_id': 'prec2', 'short_ask': 2.5, 'long_open_interest': 50})
+            assert res['reason'] == 'live_gate_spread_exceeds_0.30', res
+        def gate_after_crossed_quotes():
+            # earlier checks keep their own reasons: a crossed quote is reported as crossed, not as a live-gate reject
+            res = record({**base, 'candidate_id': 'crossed', 'short_bid': 2.3, 'short_ask': 2.2, 'short_open_interest': None})
+            assert res['reason'] == 'short_crossed_quotes', res
         for label, check in [('valid arithmetic', valid), ('20-second skew rejected', skew),
                              ('10-second skew accepted under widened threshold', skew_within_widened_threshold),
                              ('no exact match', resolution), ('idempotency', duplicate),
@@ -375,7 +437,14 @@ def self_test():
                              ('repeated malformed candidate_id does not crash', repeated_malformed_candidate_id),
                              ('fixture 1: missing contract ID rejected', fixture1_missing_contract_id),
                              ('fixture 2: mismatched/invalid contract ID rejected (4 distinct cases)', fixture2_mismatched_invalid_contract_ids),
-                             ('fixture 3: CSV integer round-trip', fixture3_csv_integer_round_trip)]:
+                             ('fixture 3: CSV integer round-trip', fixture3_csv_integer_round_trip),
+                             ('live gate: accepted row persists open interest, liquidity_gate_pass True', gate_persists_open_interest),
+                             ('live gate: spread exactly 0.30 and OI exactly 100 accepted', gate_boundaries_accept),
+                             ('live gate: spread > 0.30 rejected per leg, raw row kept', gate_spread_rejects),
+                             ('live gate: OI < 100 rejected per leg, raw row kept', gate_open_interest_rejects),
+                             ('live gate: missing/invalid OI rejected', gate_open_interest_missing_rejects),
+                             ('live gate: rejection precedence (OI missing > spread > OI low)', gate_precedence),
+                             ('live gate: crossed quotes keep their own reason', gate_after_crossed_quotes)]:
             try:
                 check()
                 print(f'PASS: {label}')
