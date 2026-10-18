@@ -216,6 +216,15 @@ base, rid = int(sys.argv[1]), sys.argv[2]
 print(sum(1 for r in rows(ROOT / 'state/ghost/ghost_mark_observations_raw.csv')[base:] if r['run_id'] == rid))
 PY
 }
+# IBKR connector preflight (scripts/ibkr_preflight.py): exit 2 = the claude.ai IBKR connector definitely needs
+# re-authorization (it expired 2026-10-16 and every job failed in its own vague way). Skip the session, save the
+# usage, and let the preflight send ONE clear Telegram alert. Any other exit (probe inconclusive/broken) proceeds.
+PF_RC=0
+python3 "$ARIA_HOME/scripts/ibkr_preflight.py" --job ghost-mark >>"$ERR_FILE" 2>&1 || PF_RC=$?
+if [ "$PF_RC" -eq 2 ]; then
+  echo "[$RUN_TS] ABORTED: IBKR connector needs re-authorization (preflight); session not started" >>"$ERR_FILE"
+  exit 1
+fi
 attempt=1
 CLAUDE_EC=1   # stays 1 (=> loud failure) if the loop never starts a session
 while :; do

@@ -133,6 +133,15 @@ PROMPT="$(cat "$PROMPT_FILE")"
 } >"$LOG_FILE"
 
 set +e
+# IBKR connector preflight (scripts/ibkr_preflight.py): exit 2 = the claude.ai IBKR connector definitely needs
+# re-authorization (it expired 2026-10-16 and every job failed in its own vague way). Skip the session, save the
+# usage, and let the preflight send ONE clear Telegram alert. Any other exit (probe inconclusive/broken) proceeds.
+PF_RC=0
+python3 "$ARIA_HOME/scripts/ibkr_preflight.py" --job gtc-guard >>"$ERR_FILE" 2>&1 || PF_RC=$?
+if [ "$PF_RC" -eq 2 ]; then
+  echo "[$RUN_TS] ABORTED: IBKR connector needs re-authorization (preflight); session not started" >>"$ERR_FILE"
+  exit 1
+fi
 # --settings disables claude-mem for this invocation only -- same cold-start
 # hook race that hit exit-guard.sh today (2026-09-10); see daily-scan.sh for
 # the full writeup and why --bare was rejected (breaks this box's OAuth auth).

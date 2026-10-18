@@ -284,6 +284,15 @@ fi
 } >"$LOG_FILE"
 
 set +e
+# IBKR connector preflight (scripts/ibkr_preflight.py): exit 2 = the claude.ai IBKR connector definitely needs
+# re-authorization (it expired 2026-10-16 and every job failed in its own vague way). Skip the session, save the
+# usage, and let the preflight send ONE clear Telegram alert. Any other exit (probe inconclusive/broken) proceeds.
+PF_RC=0
+python3 "$ARIA_HOME/scripts/ibkr_preflight.py" --job daily-scan >>"$ERR_FILE" 2>&1 || PF_RC=$?
+if [ "$PF_RC" -eq 2 ]; then
+  echo "[$RUN_TS] ABORTED: IBKR connector needs re-authorization (preflight); session not started" >>"$ERR_FILE"
+  exit 1
+fi
 # Prompt goes via stdin: --allowedTools is variadic and would otherwise swallow a
 # trailing positional prompt as a tool name.
 # Hard cap on the headless run: a hung Claude/TradingView must not hold the

@@ -180,6 +180,15 @@ trap 'rm -f "$RUN_OUTPUT"' EXIT
 # Handle the pipeline failure explicitly before restoring the error trap.
 trap - ERR
 set +e
+# IBKR connector preflight (scripts/ibkr_preflight.py): exit 2 = the claude.ai IBKR connector definitely needs
+# re-authorization (it expired 2026-10-16 and every job failed in its own vague way). Skip the session, save the
+# usage, and let the preflight send ONE clear Telegram alert. Any other exit (probe inconclusive/broken) proceeds.
+PF_RC=0
+python3 "$ARIA_HOME/scripts/ibkr_preflight.py" --job ghost-entry >>"$ERR_FILE" 2>&1 || PF_RC=$?
+if [ "$PF_RC" -eq 2 ]; then
+  echo "[$RUN_TS] ABORTED: IBKR connector needs re-authorization (preflight); session not started" >>"$ERR_FILE"
+  exit 1
+fi
 printf '%s' "$PROMPT" | timeout "${CLAUDE_TIMEOUT:-15m}" "$CLAUDE_BIN" \
   --print \
   --model "$CLAUDE_MODEL" \

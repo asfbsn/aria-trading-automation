@@ -148,6 +148,15 @@ PROMPT="$(cat "$PROMPT_FILE")"
 } >"$LOG_FILE"
 
 set +e
+# IBKR connector preflight (scripts/ibkr_preflight.py): exit 2 = the claude.ai IBKR connector definitely needs
+# re-authorization (it expired 2026-10-16 and every job failed in its own vague way). Skip the session, save the
+# usage, and let the preflight send ONE clear Telegram alert. Any other exit (probe inconclusive/broken) proceeds.
+PF_RC=0
+python3 "$ARIA_HOME/scripts/ibkr_preflight.py" --job exit-guard >>"$ERR_FILE" 2>&1 || PF_RC=$?
+if [ "$PF_RC" -eq 2 ]; then
+  echo "[$RUN_TS] ABORTED: IBKR connector needs re-authorization (preflight); session not started" >>"$ERR_FILE"
+  exit 1
+fi
 # --settings disables claude-mem for this invocation only -- root cause of
 # today's actual failure (2026-09-10): its UserPromptSubmit hook lost a
 # cold-start race against its own worker-service daemon and blocked this
