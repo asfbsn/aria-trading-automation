@@ -32,7 +32,7 @@ def fixture_1_missing_contract_id(temp_dir: Path):
     """
     base = dict.fromkeys(INPUT_FIELDS)
     base.update(
-        candidate_id='cand_f1', run_id='run_f1', resolution_status='exact',
+        candidate_id='cand_f1', run_id='run_f1', trade_date='2026-09-15', resolution_status='exact',
         derived_short_strike=100, resolved_short_strike=100,
         derived_long_strike=95, resolved_long_strike=95,
         derived_expiry='2026-10-16', resolved_expiry='2026-10-16',
@@ -81,7 +81,7 @@ def fixture_2_mismatched_invalid_contract_id(temp_dir: Path):
     """Fixture 2: 4 distinct rejections (boolean, float, nonpositive, exact-verification mismatch)."""
     base = dict.fromkeys(INPUT_FIELDS)
     base.update(
-        candidate_id='cand_f2', run_id='run_f2', resolution_status='exact',
+        candidate_id='cand_f2', run_id='run_f2', trade_date='2026-09-15', resolution_status='exact',
         derived_short_strike=100, resolved_short_strike=100,
         derived_long_strike=95, resolved_long_strike=95,
         derived_expiry='2026-10-16', resolved_expiry='2026-10-16',
@@ -120,7 +120,7 @@ def fixture_3_csv_integer_round_trip(temp_dir: Path):
     """Fixture 3: CSV integer round-trip preserves true positive integer."""
     base = dict.fromkeys(INPUT_FIELDS)
     base.update(
-        candidate_id='cand_f3', run_id='run_f3', resolution_status='exact',
+        candidate_id='cand_f3', run_id='run_f3', trade_date='2026-09-15', resolution_status='exact',
         derived_short_strike=100, resolved_short_strike=100,
         derived_long_strike=95, resolved_long_strike=95,
         derived_expiry='2026-10-16', resolved_expiry='2026-10-16',

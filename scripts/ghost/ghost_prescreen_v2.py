@@ -40,8 +40,8 @@ DEFAULT_UNIVERSE = REPO_ROOT / "data" / "universe.csv"
 
 MIN_Z_MA150_COMBINED = 1.5  # research/proposals/2026-09-17-gex-pin-ma150-extension.md — accepted screening candidate (lowest passing threshold of the three tested: 1.5, 2.0, 2.5)
 CANDIDATE_CAP = 15  # hard cap on the per-run IBKR quote-capture loop — observed ~40s/candidate against a 15-minute CLAUDE_TIMEOUT in daily-scan-ghost.sh
-FILTER_TAG = "gex_positive_z_ma150_ge_1.5_livegate"
-FILTER_TAG_BASELINE = "gex_positive_z_ma150_ge_1.5_baseline_fallback_livegate"
+FILTER_TAG = "gex_positive_z_ma150_ge_1.5_livegate_listedexp"
+FILTER_TAG_BASELINE = "gex_positive_z_ma150_ge_1.5_baseline_fallback_livegate_listedexp"
 IVPOOL_SAMPLE_N = 40
 HV_DEFINITION = "std (ddof=1) of last 30 close-to-close log returns (31 closes ending at signal bar) * sqrt(252)"
 

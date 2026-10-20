@@ -36,7 +36,7 @@ import json
 import math
 import re
 import tempfile
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -54,10 +54,14 @@ QUOTE_SKEW_MAX_SECONDS = 15
 # Every rejected attempt is still preserved in ghost_observations_raw.csv (full input JSON) with its own reason.
 LIVE_MAX_LEG_SPREAD = 0.30      # dollars per share, BOTH legs (bid-ask)
 LIVE_MIN_OPEN_INTEREST = 100    # put open interest, BOTH legs
+EXPIRY_TARGET_DTE = 30
+EXPIRY_WINDOW_MIN_DTE = 21
+EXPIRY_WINDOW_MAX_DTE = 45
+EXPIRY_POLICY = 'listed_nearest_30_v1'
 INPUT_FIELDS = '''candidate_id run_id trade_date signal_bar_date mode ticker
 signal_close ma150 vrp_ratio iv_current hv_current iv_as_of_date gex_regime
 gex_percentile gex_data_available gex_as_of z_ma150 filter_tag derived_short_strike derived_long_strike
-derived_expiry resolved_short_strike resolved_long_strike resolved_expiry
+derived_expiry resolved_short_strike resolved_long_strike resolved_expiry resolved_expiry_is_monthly derived_expiry_listed
 resolution_status underlying_contract_id short_contract_id long_contract_id
 underlying_spot short_bid short_ask short_bid_size short_ask_size
 short_quote_ts_utc long_bid long_ask long_bid_size long_ask_size short_open_interest long_open_interest long_quote_ts_utc
@@ -66,17 +70,18 @@ code_version_hash git_head git_dirty'''.split()
 ENTRY_FIELDS = '''run_id quote_ts_utc trade_date signal_bar_date mode ticker candidate_id
 in_rth market_data_type signal_close ma150 vrp_ratio iv_current hv_current
 iv_as_of_date gex_regime gex_percentile gex_data_available gex_as_of z_ma150 filter_tag
-resolved_short_strike resolved_long_strike resolved_expiry resolution_status
+resolved_short_strike resolved_long_strike resolved_expiry derived_expiry expiry_policy resolved_dte resolved_expiry_is_monthly old_rule_would_match derived_expiry_listed resolution_status
 underlying_contract_id short_contract_id long_contract_id
 underlying_spot short_bid short_ask short_mid short_bid_size short_ask_size long_bid
 long_ask long_mid long_bid_size long_ask_size short_open_interest long_open_interest short_quote_ts_utc long_quote_ts_utc
 short_quote_ts_is_estimated long_quote_ts_is_estimated quote_skew_seconds
 short_spread_abs long_spread_abs credit_mid
 credit_natural displayed_crossing_cost_per_leg spread_width_pct_of_credit
+strike_width rr_ratio crossing_cost_total crossing_cost_pct_of_credit crossing_cost_pct_of_max_loss
 liquidity_gate_pass code_version_hash git_head git_dirty'''.split()
 RAW_FIELDS = ['run_id', 'candidate_id', 'attempt_n', 'ts_utc', 'outcome', 'reason'] + [
     key for key in INPUT_FIELDS if key not in ('run_id', 'candidate_id')
-] + ['in_rth', 'in_rth_claim_agrees', 'quote_skew_seconds', 'input_json']
+] + ['in_rth', 'in_rth_claim_agrees', 'quote_skew_seconds', 'resolved_dte', 'old_rule_would_match', 'input_json']
 
 
 def in_regular_hours(now, holiday_text):
@@ -127,8 +132,32 @@ def validate(data):
     for leg in ('short', 'long'):
         if data.get(f'resolved_{leg}_strike') != data.get(f'derived_{leg}_strike') or data.get(f'resolved_{leg}_strike') is None:
             return values, f'{leg}_strike_not_exact'
-    if not data.get('resolved_expiry') or data['resolved_expiry'] != data.get('derived_expiry'):
+    if not data.get('resolved_expiry'):
         return values, 'expiry_not_exact'
+    try:
+        expiry = date.fromisoformat(data['resolved_expiry'])
+    except (ValueError, TypeError):
+        return values, 'expiry_not_exact'
+    try:
+        trade_date = date.fromisoformat(data.get('trade_date'))
+    except (ValueError, TypeError):
+        return values, 'missing_or_invalid_trade_date'
+    dte = (expiry - trade_date).days
+    values.update(resolved_dte=dte,
+                  old_rule_would_match=data['resolved_expiry'] == data.get('derived_expiry'),
+                  expiry_policy=EXPIRY_POLICY,
+                  resolved_expiry_is_monthly=data.get('resolved_expiry_is_monthly') if isinstance(data.get('resolved_expiry_is_monthly'), bool) else None,
+                  # old_rule_would_match=False only means the new rule chose a DIFFERENT date; derived_expiry_listed=False
+                  # is the case where the old exact-Friday rule certainly could not have resolved (metadata, never a gate).
+                  derived_expiry_listed=data.get('derived_expiry_listed') if isinstance(data.get('derived_expiry_listed'), bool) else None)
+    if dte < EXPIRY_WINDOW_MIN_DTE or dte > EXPIRY_WINDOW_MAX_DTE:
+        return values, 'expiry_outside_window'
+    try:
+        strike_width = float(data['resolved_short_strike']) - float(data['resolved_long_strike'])
+    except (ValueError, TypeError, OverflowError):
+        return values, 'invalid_strike_width'
+    if not math.isfinite(strike_width) or strike_width <= 0:
+        return values, 'invalid_strike_width'
     for conid_field in ('underlying_contract_id', 'short_contract_id', 'long_contract_id'):
         conid = data.get(conid_field)
         if conid is None:
@@ -171,9 +200,15 @@ def validate(data):
             return values, 'live_gate_open_interest_below_100'
     credit = values['short_mid'] - values['long_mid']
     natural = data['short_bid'] - data['long_ask']
+    crossing_cost = credit - natural
+    max_loss = strike_width - credit
     values.update(credit_mid=credit, credit_natural=natural,
                   displayed_crossing_cost_per_leg=(credit - natural) / 2,
                   spread_width_pct_of_credit=(values['short_spread_abs'] + values['long_spread_abs']) / credit,
+                  strike_width=strike_width, rr_ratio=max_loss / credit if max_loss > 0 else None,
+                  crossing_cost_total=crossing_cost,
+                  crossing_cost_pct_of_credit=crossing_cost / credit,
+                  crossing_cost_pct_of_max_loss=crossing_cost / max_loss if max_loss > 0 else None,
                   liquidity_gate_pass=True,  # every accepted row passed the live liquidity gate above
                   quote_ts_utc=max(short_ts, long_ts).isoformat())
     return values, ''
@@ -257,16 +292,18 @@ def log_observation(raw_bytes, state_dir, holiday_text):
                'ts_utc': now.isoformat(), 'outcome': outcome, 'reason': reason,
                'in_rth': rth, 'in_rth_claim_agrees': rth == claim if isinstance(claim, bool) else None,
                'quote_skew_seconds': values['quote_skew_seconds'],
+               'resolved_dte': values.get('resolved_dte'),
+               'old_rule_would_match': values.get('old_rule_would_match'),
                'input_json': raw_bytes.decode('utf-8')})
         return {'candidate_id': candidate, 'attempt_n': attempt, 'outcome': outcome, 'reason': reason}
 
 
 def self_test():
     base = dict.fromkeys(INPUT_FIELDS)
-    base.update(candidate_id='valid', run_id='synthetic', resolution_status='exact',
+    base.update(candidate_id='valid', run_id='synthetic', trade_date='2026-09-15', resolution_status='exact',
                 derived_short_strike=100, resolved_short_strike=100,
                 derived_long_strike=95, resolved_long_strike=95,
-                derived_expiry='2026-10-16', resolved_expiry='2026-10-16',
+                derived_expiry='2026-10-16', resolved_expiry='2026-10-16', derived_expiry_listed=True,
                 underlying_contract_id=123456, short_contract_id=234567, long_contract_id=345678,
                 short_bid=2.0, short_ask=2.2, long_bid=0.9, long_ask=1.1,
                 short_bid_size=3, long_bid_size=2, short_open_interest=500, long_open_interest=500,
@@ -286,13 +323,20 @@ def self_test():
             for key, expected in dict(short_mid=2.1, long_mid=1, short_spread_abs=.2,
                     long_spread_abs=.2, credit_mid=1.1, credit_natural=.9,
                     displayed_crossing_cost_per_leg=.1, spread_width_pct_of_credit=4/11,
-                    quote_skew_seconds=2).items():
+                    quote_skew_seconds=2, strike_width=5, crossing_cost_total=.2,
+                    crossing_cost_pct_of_credit=.2/1.1, crossing_cost_pct_of_max_loss=.2/3.9,
+                    rr_ratio=3.9/1.1).items():
                 assert math.isclose(float(row[key]), expected, abs_tol=1e-12), key
             assert math.isclose(float(row['z_ma150']), 1.8765, abs_tol=1e-6), 'z_ma150'
             assert row['filter_tag'] == 'gex_positive_z_ma150_ge_1.5', 'filter_tag'
             assert row['underlying_contract_id'] == '123456'
             assert row['short_contract_id'] == '234567'
             assert row['long_contract_id'] == '345678'
+            assert row['derived_expiry'] == '2026-10-16'
+            assert row['expiry_policy'] == EXPIRY_POLICY
+            assert row['resolved_dte'] == '31'
+            assert row['old_rule_would_match'] == 'True'
+            assert row['derived_expiry_listed'] == 'True'
             assert int(row['underlying_contract_id']) == 123456
             assert int(row['short_contract_id']) == 234567
             assert int(row['long_contract_id']) == 345678
@@ -308,6 +352,30 @@ def self_test():
             assert result['outcome'] == 'accepted'
         def resolution():
             assert record({**base, 'candidate_id': 'resolution', 'resolution_status': 'no_exact_match'})['reason'] == 'resolution_not_exact'
+        def expiry_window():
+            for dte in (21, 45):
+                expiry = (date.fromisoformat(base['trade_date']) + timedelta(days=dte)).isoformat()
+                candidate = f'dte_{dte}'
+                assert record({**base, 'candidate_id': candidate, 'resolved_expiry': expiry})['outcome'] == 'accepted'
+                row = next(r for r in rows(state / 'ghost_entries.csv') if r['candidate_id'] == candidate)
+                assert row['resolved_dte'] == str(dte) and row['old_rule_would_match'] == 'False'
+            for dte in (20, 46):
+                expiry = (date.fromisoformat(base['trade_date']) + timedelta(days=dte)).isoformat()
+                assert record({**base, 'candidate_id': f'dte_{dte}', 'resolved_expiry': expiry})['reason'] == 'expiry_outside_window'
+            assert record({**base, 'candidate_id': 'missing_date', 'trade_date': None})['reason'] == 'missing_or_invalid_trade_date'
+            assert record({**base, 'candidate_id': 'missing_expiry', 'resolved_expiry': None})['reason'] == 'expiry_not_exact'
+            for flag in (True, False, None):
+                candidate = f'monthly_{flag}'
+                assert record({**base, 'candidate_id': candidate, 'resolved_expiry_is_monthly': flag})['outcome'] == 'accepted'
+                row = next(r for r in rows(state / 'ghost_entries.csv') if r['candidate_id'] == candidate)
+                assert row['resolved_expiry_is_monthly'] == ('' if flag is None else str(flag))
+            assert record({**base, 'candidate_id': 'invalid_width',
+                           'derived_short_strike': 95, 'resolved_short_strike': 95})['reason'] == 'invalid_strike_width'
+        def rejected_raw_dte():
+            candidate = 'raw_dte'
+            assert record({**base, 'candidate_id': candidate, 'short_open_interest': 0})['reason'] == 'live_gate_open_interest_below_100'
+            row = next(r for r in rows(state / 'ghost_observations_raw.csv') if r['candidate_id'] == candidate)
+            assert row['resolved_dte'] == '31' and row['old_rule_would_match'] == 'True'
         def duplicate():
             assert record(base)['outcome'] == 'duplicate_skipped'
             valid_entries = [r for r in rows(state / 'ghost_entries.csv') if r['candidate_id'] == 'valid']
@@ -431,7 +499,8 @@ def self_test():
             assert res['reason'] == 'short_crossed_quotes', res
         for label, check in [('valid arithmetic', valid), ('20-second skew rejected', skew),
                              ('10-second skew accepted under widened threshold', skew_within_widened_threshold),
-                             ('no exact match', resolution), ('idempotency', duplicate),
+                             ('no exact match', resolution), ('expiry window and monthly metadata', expiry_window),
+                             ('rejected raw row retains DTE', rejected_raw_dte), ('idempotency', duplicate),
                              ('missing market_data_type', missing_live),
                              ('estimated timestamp still accepts', estimated_timestamp),
                              ('repeated malformed candidate_id does not crash', repeated_malformed_candidate_id),

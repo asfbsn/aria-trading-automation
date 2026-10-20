@@ -23,8 +23,9 @@ Copy mode and signal_bar_date from the prescreen envelope when absent on an item
   in step 4 below (used only because `bid_ask` carries no timestamp of its
   own) — always explicit and flagged, never silent, and never used for any
   other field.
-- Exact derived contracts only. No snapping, nearby expiry, alternate width,
-  strike search, liquidity rejection, sizing, or trading directives.
+- Exact derived strikes only. No snapping, alternate width, strike search,
+  liquidity rejection, sizing, or trading directives. Choose expiry once by
+  step 2 below; never try a second expiry.
 
 ## Per-Candidate Processing Flow
 1. Resolve the underlying with `search_contracts` if its contract id is absent.
@@ -33,9 +34,22 @@ Copy mode and signal_bar_date from the prescreen envelope when absent on an item
    `get_price_snapshot` on that underlying contract ID and record underlying_spot
    from its response. If unavailable, use null.
 2. Call `get_option_parameters` for that underlying's real listed expirations.
-3. Call `get_option_data` bounded around derived_long_strike and
-   derived_short_strike, for derived_expiry. Confirm both exact listed PUT
-   strikes and the exact expiry, including each leg's underlying identity.
+   Compute DTE for each expiration as (expiry date - SCAN_DATE) in calendar days.
+   Eligible expiries have 21 <= DTE <= 45. Choose the eligible expiry minimizing
+   |DTE - 30|; ties go to the shorter DTE. If several rows share that date,
+   choose the row whose `trading_class` equals the underlying's symbol (standard
+   class). If still ambiguous, set resolution_status=`no_exact_match` and all
+   resolved fields, all contract IDs, and `resolved_expiry_is_monthly` null.
+   Record the chosen row's `regular` flag as `resolved_expiry_is_monthly`:
+   true means regular monthly, false means weekly/daily. If no eligible expiry
+   exists, use the same no_exact_match/null outcome. Copy `derived_expiry`
+   verbatim from the candidate as the intended Friday for old-rule pairing, and
+   set `derived_expiry_listed` = true if that date appears among the listed
+   expirations (any row), false if it does not, null only if the list could not
+   be read. This is metadata only: it never changes which expiry is chosen.
+3. Call `get_option_data` for THAT chosen expiry only, bounded around
+   derived_long_strike and derived_short_strike. Confirm both exact listed PUT
+   strikes at the chosen expiry, including each leg's underlying identity.
    Cross-check each contract's own returned fields: right=PUT, strike
    (matches resolved_short_strike/resolved_long_strike exactly), expiry
    (matches resolved_expiry exactly), currency=USD, multiplier=100.
@@ -44,9 +58,9 @@ Copy mode and signal_bar_date from the prescreen envelope when absent on an item
    that ID must NOT be accepted: set resolution_status=`conid_field_mismatch`
    and all contract IDs null (never silently accepted).
    Normalize date formatting only; never change the date or strike value.
-   If expiry is not listed, do not query a substitute expiration. If either
-   leg/expiry cannot be verified, set resolution_status=`no_exact_match` and
-   ALL three resolved fields and all three contract IDs null. Still write JSON
+   If either exact strike cannot be verified, set resolution_status=`no_exact_match`
+   and ALL three resolved fields, `resolved_expiry_is_monthly`, and all three
+   contract IDs null. Still write JSON
    and call the logger.
 4. For an exact match with verified contract fields, set resolution_status=`exact`
    and copy the actual listed strikes/expiry into resolved fields, and copy the
@@ -129,6 +143,8 @@ Copy mode and signal_bar_date from the prescreen envelope when absent on an item
   "resolved_short_strike": null,
   "resolved_long_strike": null,
   "resolved_expiry": null,
+  "resolved_expiry_is_monthly": null,
+  "derived_expiry_listed": null,
   "resolution_status": "no_exact_match",
   "underlying_contract_id": null,
   "short_contract_id": null,
