@@ -28,9 +28,11 @@ import argparse
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -63,6 +65,18 @@ def init_status(line):
     return None
 
 
+def kill_group(process):
+    """SIGKILL the probe's whole process group: `claude` spawns MCP server children that would otherwise keep the
+    stdout pipe open (and readline() blocked) after only the parent is killed."""
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        try:
+            process.kill()
+        except OSError:
+            pass
+
+
 def probe_once(claude_bin='claude', timeout=75):
     """Start a headless session, read its init event, kill it. Returns the IBKR status string or None."""
     command = [claude_bin, '--print', '--output-format', 'stream-json', '--verbose',
@@ -71,18 +85,23 @@ def probe_once(claude_bin='claude', timeout=75):
                '--settings', '{"enabledPlugins":{"claude-mem@thedotmack":false}}']
     try:
         process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                   stderr=subprocess.DEVNULL, text=True, cwd=str(ROOT))
+                                   stderr=subprocess.DEVNULL, text=True, cwd=str(ROOT),
+                                   start_new_session=True)
     except OSError as error:
         log(f'cannot start probe session: {error}')
         return None
-    deadline = time.monotonic() + timeout
+    # readline() blocks, so a hung session would never reach a deadline check inside the loop: a timer kills the
+    # child at the deadline (readline then returns EOF) and is always cancelled in `finally`.
+    watchdog = threading.Timer(timeout, kill_group, args=(process,))
+    watchdog.daemon = True
+    watchdog.start()
     try:
         try:
             process.stdin.write('ok')
             process.stdin.close()
         except OSError:
             pass
-        while time.monotonic() < deadline:
+        while True:
             line = process.stdout.readline()
             if not line:
                 break
@@ -92,7 +111,8 @@ def probe_once(claude_bin='claude', timeout=75):
             if '"subtype":"init"' in line.replace(' ', ''):
                 return None   # init event without an IBKR server entry: inconclusive
     finally:
-        process.kill()
+        watchdog.cancel()
+        kill_group(process)
         process.wait()
     return None
 
@@ -236,6 +256,15 @@ def self_test():
     expect('non-init line ignored', init_status('{"type":"assistant"}') is None)
     expect('garbage ignored', init_status('not json') is None)
     expect('init without IBKR is None', init_status('{"type":"system","subtype":"init","mcp_servers":[]}') is None)
+
+    with tempfile.TemporaryDirectory() as temp:
+        hang = Path(temp) / 'hang.sh'
+        hang.write_text('#!/bin/sh\nsleep 30\n')
+        hang.chmod(0o755)
+        started = time.monotonic()
+        result = probe_once(str(hang), timeout=2)
+        expect('hung probe session is killed at the deadline (fails open)',
+               result is None and time.monotonic() - started < 10)
 
     sleeps = []
     run = lambda statuses, live=None, cleared=False: check(
