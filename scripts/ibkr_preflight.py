@@ -51,6 +51,18 @@ def log(message):
     print(f'[ibkr_preflight {time.strftime("%Y-%m-%d %H:%M:%S")}] {message}', file=sys.stderr, flush=True)
 
 
+AUTH_FAILURE_MARKERS = ('failed to authenticate', 'oauth session expired', 'could not be refreshed',
+                        'invalid api key', 'please run /login', 'authentication_error')
+
+
+def auth_failure(line):
+    """True if a probe output line says the Claude CLI's OWN login failed (not the IBKR connector). On 2026-10-22 the
+    19:00 scan died with 'Failed to authenticate: OAuth session expired and could not be refreshed' and the probe, which
+    saw no init event, called it inconclusive and let the scan run."""
+    lowered = str(line).lower()
+    return any(marker in lowered for marker in AUTH_FAILURE_MARKERS)
+
+
 def init_status(line):
     """IBKR MCP status from one stream-json line: a status string, or None if not the init event / no IBKR server."""
     try:
@@ -108,6 +120,8 @@ def probe_once(claude_bin='claude', timeout=75):
             status = init_status(line)
             if status is not None:
                 return status
+            if auth_failure(line):
+                return 'claude-auth-failed'
             if '"subtype":"init"' in line.replace(' ', ''):
                 return None   # init event without an IBKR server entry: inconclusive
     finally:
@@ -166,6 +180,13 @@ def check(probe=probe_once, live_check=live_check_connected, clear_cache=clear_s
         last = status
         if status == 'connected':
             return 'ok', f'connected (attempt {attempt})'
+        if status == 'claude-auth-failed':
+            # May be a transient refresh failure (the token refreshed fine minutes later on 2026-10-22): retry first.
+            if attempt < attempts:
+                log(f'Claude CLI login failed (attempt {attempt}/{attempts}); retrying in {wait}s')
+                sleep(wait)
+                continue
+            return 'blocked', 'CLAUDE_LOGIN'
         if status == 'needs-auth':
             if not cache_cleared and live_check() is True and clear_cache():
                 cache_cleared = True
@@ -205,9 +226,13 @@ def alert_due(stamp=ALERT_STAMP, now=None):
         return True
 
 
-def send_alert(job, send=True, stamp=ALERT_STAMP):
-    message = (f'🔴 ARIA: the IBKR connector needs re-authorization. Job "{job}" was skipped at '
-               f'{time.strftime("%H:%M %Z")}. Fix: claude.ai → Settings → Connectors → Interactive Brokers → reconnect.')
+def send_alert(job, send=True, stamp=ALERT_STAMP, reason=''):
+    if reason == 'CLAUDE_LOGIN':
+        message = (f'🔴 ARIA: the Claude CLI login failed (OAuth session expired and could not be refreshed). Job "{job}" '
+                   f'was skipped at {time.strftime("%H:%M %Z")}. Fix: in a terminal run `claude`, then /login.')
+    else:
+        message = (f'🔴 ARIA: the IBKR connector needs re-authorization. Job "{job}" was skipped at '
+                   f'{time.strftime("%H:%M %Z")}. Fix: claude.ai → Settings → Connectors → Interactive Brokers → reconnect.')
     if job in LIVE_JOBS:
         message += ' Live-account checks (exit guard / GTC guard / scan) are NOT running until then: verify positions and orders manually in IBKR.'
     if not alert_due(stamp):
@@ -253,6 +278,8 @@ def self_test():
         {'name': 'claude.ai Interactive Brokers (IBKR)', 'status': status}]})
     expect('init status parsed', init_status(init('connected')) == 'connected')
     expect('needs-auth parsed', init_status(init('needs-auth')) == 'needs-auth')
+    expect('claude login failure detected', auth_failure('Failed to authenticate: OAuth session expired and could not be refreshed'))
+    expect('normal line is not a login failure', not auth_failure('{"type":"system","subtype":"init"}'))
     expect('non-init line ignored', init_status('{"type":"assistant"}') is None)
     expect('garbage ignored', init_status('not json') is None)
     expect('init without IBKR is None', init_status('{"type":"system","subtype":"init","mcp_servers":[]}') is None)
@@ -278,6 +305,9 @@ def self_test():
     expect('stale cache cleared but still needs-auth -> blocked',
            run(['needs-auth', 'needs-auth'], live=True, cleared=True)[0] == 'blocked')
     expect('live connected but nothing to clear -> blocked', run(['needs-auth'], live=True, cleared=False)[0] == 'blocked')
+    expect('login failure then ok -> ok (transient refresh)', run(['claude-auth-failed', 'connected'])[0] == 'ok')
+    expect('login failure on every attempt -> blocked CLAUDE_LOGIN',
+           run(['claude-auth-failed'] * 3) == ('blocked', 'CLAUDE_LOGIN'))
     expect('all pending -> inconclusive (fail open)', run(['pending', 'pending', 'pending'])[0] == 'inconclusive')
     expect('unparseable probes -> inconclusive (fail open)', run([None, None, None])[0] == 'inconclusive')
 
@@ -321,7 +351,7 @@ def main():
         return 0
     if verdict == 'blocked':
         if not args.no_alert:
-            send_alert(args.job)
+            send_alert(args.job, reason=detail)
         return 2
     return 0
 
