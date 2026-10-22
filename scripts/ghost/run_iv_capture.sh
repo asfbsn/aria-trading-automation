@@ -82,7 +82,18 @@ mkdir -p "$RAW_DIR" "$ARIA_HOME/state/ghost"
 # The claude.ai connectors connect asynchronously: a session can start with the IBKR connector still
 # "pending" (observed 2026-10-01: model replied "no IBKR tools", 0 tool calls, exit 0). Retry a session
 # that made zero IBKR tool calls, up to IV_CAPTURE_MAX_ATTEMPTS, with a short wait for the connector.
-IV_CAPTURE_MAX_ATTEMPTS="${IV_CAPTURE_MAX_ATTEMPTS:-3}"
+IV_CAPTURE_MAX_ATTEMPTS="${IV_CAPTURE_MAX_ATTEMPTS:-4}"
+IV_CAPTURE_RETRY_SLEEP="${IV_CAPTURE_RETRY_SLEEP:-30}"
+# Preflight (2026-10-22): on 2026-10-21 all three sessions started with NO IBKR tools (connector absent from the
+# session's MCP list) and the 20 s retries could not outwait it. The preflight polls the connector status for up to
+# ~60 s and clears a stale needs-auth cache entry. Exit 2 = definite re-authorization needed -> skip (the main Ghost
+# wrapper already alerted); anything else proceeds to the session as before.
+PF_RC=0
+python3 "$ARIA_HOME/scripts/ibkr_preflight.py" --job iv-capture --no-alert >&2 || PF_RC=$?
+if [ "$PF_RC" -eq 2 ]; then
+  echo "iv_capture: IBKR connector needs re-authorization (preflight); skipping" >&2
+  exit 0
+fi
 attempt=1
 while :; do
   UTC_TS="$(date -u +%Y%m%d_%H%M%S)"
@@ -122,9 +133,9 @@ PY
   if [ "${IBKR_CALLS:-0}" -gt 0 ] || [ "$attempt" -ge "$IV_CAPTURE_MAX_ATTEMPTS" ]; then
     break
   fi
-  echo "iv_capture: attempt $attempt made 0 IBKR tool calls (connector likely still pending); retrying in 20s" >&2
+  echo "iv_capture: attempt $attempt made 0 IBKR tool calls (connector likely still pending); retrying in ${IV_CAPTURE_RETRY_SLEEP}s" >&2
   attempt=$((attempt + 1))
-  sleep 20
+  sleep "$IV_CAPTURE_RETRY_SLEEP"
 done
 
 if [ "$CLAUDE_EC" -ne 0 ]; then
