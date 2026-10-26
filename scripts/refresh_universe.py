@@ -43,7 +43,7 @@ from curl_cffi import requests
 
 # Tickers the IBKR connector cannot price (no US listing or options section), so the live scan
 # hard-fails its completeness guard on them every day. APGE: VALUE-exchange listing only (2026-10-01).
-EXCLUDED_TICKERS = {"APGE"}
+EXCLUDED_TICKERS = {"APGE", "WBD"}
 
 SOURCES = [
     ("IVV", "https://www.ishares.com/us/products/239726/ishares-core-s-p-500-etf/latest-holdings.csv"),
