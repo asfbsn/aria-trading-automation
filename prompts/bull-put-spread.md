@@ -480,6 +480,34 @@ unsettled) changes separately. Produce, in order:
   reject count or in `reject-tickers-named` -- it never got a definitive
   answer, so it isn't a REJECT. Omit this subsection entirely when
   SIGNALS_FAILED is 0.
+- **Near-miss annotation (INFORMATIONAL ONLY; owner-approved measurement
+  experiment, 2026-10-26; omit this subsection entirely when there is nothing
+  to print):** its own subsection after Failures, NEVER inside Rejects and NEVER
+  counted in the Headline, in `reject-tickers-named`, or in any of the five
+  final lines. It NEVER changes a classification, a counter, a PRIME decision
+  or a directive: the name stays a liquidity-gate REJECT exactly as step 6
+  says. It measures whether the fixed $0.30 gate rejects trades that look fine
+  once cost is compared with credit and depth. It is NOT a recommendation and
+  must not be worded as one.
+  For each finalist that (a) was rejected ONLY by the liquidity gate (step 6)
+  and (b) has `entry_confirmed: true` on the SETTLED read: using ONLY quotes you
+  ALREADY pulled in steps 4-7 (no extra tool calls, no new strikes, no new
+  expiry), look at the tested put pairs whose short strike is at or below
+  MA150. At MID prices (`mid = (bid + ask) / 2`) compute `credit_mid = short
+  mid - long mid` and `rr_mid = (width - credit_mid) / credit_mid`. Pick the
+  pair whose `rr_mid` is inside 1.5-2.5 (if several, the deepest/safest short
+  strike). If no tested pair has `rr_mid` inside the band print
+  `NEAR_MISS_NONE: <TICKER> no tested pair in the R/R band at mid`. Otherwise
+  print exactly ONE line of this form (fields in this order, one space
+  between tokens):
+  `NEAR_MISS_COST: <TICKER> short <K_s> long <K_l> exp <YYYY-MM-DD> credit_mid <x.xx> natural <y.yy> cost_pct_credit <z>% cost_pct_max_loss <w>% rr_mid <r.rr> min_size <n|na> cost_rule_pass <YES|NO|UNKNOWN>`
+  where `natural = short bid - long ask`, `cost = credit_mid - natural`,
+  `cost_pct_credit = cost / credit_mid`, `cost_pct_max_loss = cost / (width -
+  credit_mid)`, `min_size = min(short put bid_size, long put ask_size)` from the
+  `bid_ask` response (`na` if absent), and `cost_rule_pass` = YES only if
+  `cost_pct_credit <= 50%` AND `cost_pct_max_loss <= 25%` AND `min_size >= 10`;
+  NO if any of those fails; UNKNOWN if `min_size` is `na`. The thresholds are
+  provisional; do not tune them per name.
 
 After the report, emit these FIVE lines, each on its own line, in this exact
 order, as the literal last thing you output:
